@@ -1,3 +1,5 @@
+import Image from "next/image"
+
 export default function Week1Page() {
   return (
     <main className="min-h-screen bg-neutral-950 px-6 py-20 text-white">
@@ -23,7 +25,7 @@ export default function Week1Page() {
             페이지 구성
           </h2>
 
-          <img
+          <Image
             src="/pres/week1/1.png"
             alt=""
             className="mb-6 rounded-2xl w-100 h-auto"
@@ -39,7 +41,7 @@ export default function Week1Page() {
             작업 화면 구상
           </h2>
 
-          <img
+          <Image
             src="/pres/week1/2.png"
             alt=""
             className="mb-6 w-full rounded-2xl"
