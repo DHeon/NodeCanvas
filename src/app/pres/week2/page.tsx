@@ -1,5 +1,8 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import Image from "next/image";
+import relatedImage1 from "../../../../public/pres/week2/1.png";
+import relatedImage2 from "../../../../public/pres/week2/2.png";
+import relatedImage3 from "../../../../public/pres/week2/3.png";
 
 export const metadata: Metadata = {
   title: "Nono | 2주차 개발 발표",
@@ -7,14 +10,7 @@ export const metadata: Metadata = {
     "Docker와 PostgreSQL 환경 구성부터 Prisma를 통한 대시보드 데이터 조회까지",
 };
 
-const sections = [
-  { id: "goal", title: "이번 주 목표" },
-  { id: "database", title: "DB 환경 구성" },
-  { id: "schema", title: "테이블 설계" },
-  { id: "seed", title: "개발용 데이터" },
-  { id: "dashboard", title: "대시보드 연결" },
-  { id: "demo", title: "시연과 다음 계획" },
-];
+const relatedImages = [relatedImage1, relatedImage2, relatedImage3];
 
 const userFields = [
   ["id", "UUID · 기본키"],
@@ -42,8 +38,6 @@ const sectionClass = "scroll-mt-8 border-t border-neutral-800 py-16 sm:py-20";
 const titleClass = "mt-3 text-3xl font-semibold tracking-tight sm:text-4xl";
 const numberClass = "font-mono text-sm tracking-widest text-violet-300";
 const cardClass = "rounded-2xl border border-neutral-800 bg-neutral-900/60 p-6";
-const linkClass =
-  "rounded-xl px-5 py-3 text-sm font-medium transition focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-400";
 
 export default function Week2Page() {
   return (
@@ -57,9 +51,9 @@ export default function Week2Page() {
             DB
           </h1>
           <p className="mt-6 max-w-2xl text-lg leading-8 text-neutral-300">
-            PostgreSQL에 사용자와 프로젝트를 저장하고,
+            PostgreSQL에 사용자와 프로젝트를 저장
             <br className="hidden sm:block" />
-            Prisma로 조회한 데이터를 대시보드 카드에 연결했습니다.
+            Prisma로 조회한 데이터를 대시보드 카드에 연결
           </p>
           <div className="mt-8 flex flex-wrap gap-2 text-xs text-neutral-300">
             {[
@@ -76,23 +70,6 @@ export default function Week2Page() {
               </span>
             ))}
           </div>
-          <nav
-            aria-label="발표 목차"
-            className="mt-12 grid gap-3 sm:grid-cols-2 lg:grid-cols-3"
-          >
-            {sections.map((section, index) => (
-              <a
-                key={section.id}
-                href={`#${section.id}`}
-                className="rounded-lg border border-neutral-800 px-4 py-3 text-sm text-neutral-300 transition hover:border-violet-400 hover:text-white focus-visible:outline-2 focus-visible:outline-violet-400"
-              >
-                <span className="mr-3 font-mono text-violet-300">
-                  0{index + 1}
-                </span>
-                {section.title}
-              </a>
-            ))}
-          </nav>
         </header>
 
         <section
@@ -134,10 +111,10 @@ export default function Week2Page() {
         >
           <p className={numberClass}>02 / DATA MODEL</p>
           <h2 id="schema-title" className={titleClass}>
-            사용자 1명, 프로젝트 여러 개
+            사용자 {"- >"} 프로젝트
           </h2>
           <p className="mt-5 text-lg leading-8 text-neutral-300">
-            Project의 ownerId가 User의 id를 참조하는 1:N 관계를 구성했습니다.
+            Project의 ownerId가 User의 id를 참조하는 1:N 관계를 구성
           </p>
           <div className="mt-8 grid items-start gap-5 md:grid-cols-[1fr_auto_1fr]">
             {[
@@ -209,10 +186,6 @@ export default function Week2Page() {
           </pre>
           <ul className="mt-6 list-disc space-y-3 pl-5 leading-7 text-neutral-300">
             <li>
-              Server Component에서 직접 조회하고, connection()으로 요청 시
-              렌더링합니다.
-            </li>
-            <li>
               카드에 필요한 id와 title만 가져오며 최근 수정 순서로 정렬합니다.
             </li>
             <li>
@@ -224,6 +197,29 @@ export default function Week2Page() {
             현재는 seed 사용자의 프로젝트를 조회합니다. 로그인 사용자에 따른
             조회와 접근 권한 검사는 인증 개발 단계에서 연결할 예정입니다.
           </p>
+        </section>
+
+        <section
+          id="related-images"
+          aria-labelledby="related-images-title"
+          className={sectionClass}
+        >
+          <p className={numberClass}>04 / IMAGES</p>
+          <div className="mt-8 space-y-8">
+            {relatedImages.map((src, index) => (
+              <figure
+                key={src.src}
+                className="overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-900"
+              >
+                <Image
+                  src={src}
+                  alt={`2주차 개발 관련 화면 ${index + 1}`}
+                  unoptimized
+                  className="h-auto w-full"
+                />
+              </figure>
+            ))}
+          </div>
         </section>
 
         <footer className="flex flex-wrap justify-between gap-3 border-t border-neutral-800 py-8 text-sm text-neutral-400">
