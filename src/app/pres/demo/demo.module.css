@@ -1,0 +1,234 @@
+.workspace {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: #333;
+  background: #fff;
+  font-family: Arial, "Malgun Gothic", sans-serif;
+  font-size: 13px;
+  color-scheme: light;
+  user-select: none;
+}
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 38px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #e5e5e5;
+}
+
+.titlebar h1 {
+  font-size: 13px;
+  font-weight: 500;
+}
+.badge {
+  font-size: 12px;
+  color: #777;
+}
+
+.toolbar,
+.tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.toolbar {
+  flex-wrap: wrap;
+  justify-content: space-between;
+  padding: 10px;
+  border-bottom: 1px solid #ddd;
+}
+.tools {
+  gap: 5px;
+}
+.tools button,
+.close {
+  padding: 5px 12px;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+}
+.tools button:hover,
+.close:hover {
+  background: #f5f5f5;
+}
+.tools button:active,
+.tools button[aria-pressed="true"] {
+  border-color: #888;
+  background: #eee;
+}
+.workspace button:focus-visible,
+.viewport:focus-visible {
+  outline: 2px solid #666;
+  outline-offset: -3px;
+}
+.divider {
+  height: 23px;
+  border-left: 1px solid #ddd;
+  margin: 0 5px;
+}
+.zoom {
+  min-width: 44px;
+  text-align: center;
+  font-size: 12px;
+}
+
+.viewport {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: #eee;
+  cursor: grab;
+  touch-action: none;
+  overscroll-behavior: none;
+}
+.board {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  border: 1px solid #ccc;
+  background: #fff;
+}
+.boardLabel {
+  position: absolute;
+  top: 28px;
+  left: 32px;
+  color: #777;
+  font-size: 14px;
+  pointer-events: none;
+}
+.boardLabel span {
+  margin-left: 16px;
+  font-size: 12px;
+  color: #888;
+}
+
+.node {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #ccc;
+  background: #fff;
+  cursor: default;
+}
+.selected {
+  outline: 1px solid #666;
+}
+.nodeBar {
+  display: flex;
+  align-items: center;
+  flex: 0 0 32px;
+  border-bottom: 1px solid #e5e5e5;
+  background: #f7f7f7;
+  padding-right: 4px;
+}
+.selected .nodeBar {
+  background: #eee;
+}
+.handle {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  align-self: stretch;
+  min-width: 0;
+  padding: 0 10px;
+  text-align: left;
+  color: #666;
+  cursor: grab;
+  font:
+    12px "Malgun Gothic",
+    sans-serif;
+}
+.close {
+  width: 23px;
+  height: 23px;
+  padding: 0;
+  line-height: 18px;
+  font-size: 18px;
+  border-color: transparent;
+  background: transparent;
+}
+.nodeTitle {
+  width: 100%;
+  flex-shrink: 0;
+  padding: 16px 16px 8px;
+  outline: none;
+  border: 0;
+  background: transparent;
+  color: #333;
+  font-size: 16px;
+  font-weight: 500;
+  user-select: text;
+}
+.nodeText {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  resize: none;
+  padding: 4px 16px 16px;
+  outline: none;
+  border: 0;
+  background: transparent;
+  color: #555;
+  font-size: 14px;
+  line-height: 1.7;
+  user-select: text;
+  overscroll-behavior: contain;
+  cursor: text;
+}
+.nodeTitle:focus,
+.nodeText:focus {
+  background: #fafafa;
+}
+.nodeTitle::placeholder,
+.nodeText::placeholder {
+  color: #888;
+}
+.hand .node {
+  pointer-events: none;
+}
+.dragging,
+.dragging .handle {
+  cursor: grabbing;
+}
+.empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #777;
+  font-size: 16px;
+  pointer-events: none;
+}
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 30px;
+  padding: 5px 12px;
+  border-top: 1px solid #ddd;
+  color: #777;
+  font-size: 11px;
+}
+.statusbar > span {
+  white-space: nowrap;
+}
+@media (max-width: 700px) {
+  .hint {
+    display: none;
+  }
+  .toolbar {
+    gap: 8px;
+  }
+}
