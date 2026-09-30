@@ -38,12 +38,13 @@ export default function Workspace({ projectId }: WorkspaceProps) {
     zoom: 0.5,
   });
 
-  const viewportRef = useRef<HTMLDivElement>(null);
-  const gestureRef = useRef<Gesture | null>(null);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [isPanning, setIsPanning] = useState(false);
+  const viewportRef = useRef<HTMLDivElement>(null); // DOM관련 크기 측정, 이벤트 연결할 때 
+  const gestureRef = useRef<Gesture | null>(null); //드래그 시작 시 위치와 어떤거 이동할지 
 
-  const fitCanvas = useCallback(() => {
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null); //선택된 노드가 뭔지
+  const [isPanning, setIsPanning] = useState(false); //드래그 상태따라 커서 변경
+
+  const fitCanvas = useCallback(() => { //화면 맞춤
     const viewport = viewportRef.current;
 
     if (!viewport || gestureRef.current) return;
@@ -70,7 +71,7 @@ export default function Workspace({ projectId }: WorkspaceProps) {
     });
   }, [workspace.canvas.width, workspace.canvas.height]);
 
-  // 창 전환이나 포인터 취소로 드래그가 계속 남아 있지 않도록 정리한다.
+  // 드래그 정리
   const clearGesture = useCallback(() => {
     const gesture = gestureRef.current;
     const viewport = viewportRef.current;
@@ -88,7 +89,7 @@ export default function Workspace({ projectId }: WorkspaceProps) {
     return () => window.removeEventListener("blur", clearGesture);
   }, [clearGesture]);
 
-  useEffect(() => {
+  useEffect(() => { //viewportRef의 크기가 바뀌면 fitCanvas
     const viewport = viewportRef.current;
 
     if (!viewport) return;
@@ -112,7 +113,7 @@ export default function Workspace({ projectId }: WorkspaceProps) {
     function handleWheel(event: WheelEvent) {
       if (!viewport) return;
 
-      // 입력 영역에서는 텍스트 스크롤을 그대로 사용한다.
+      // 입력 영역에서는 텍스트 스크롤을 사용
       if (
         event.target instanceof Element &&
         event.target.closest("textarea, input, [contenteditable='true']")
@@ -122,7 +123,7 @@ export default function Workspace({ projectId }: WorkspaceProps) {
 
       event.preventDefault();
 
-      // 화면이나 노드를 드래그하는 중에는 확대·축소하지 않는다.
+      // 화면이나 노드를 드래그하는 중에는 확대 축소 안되게
       if (gestureRef.current) return;
 
       const rect = viewport.getBoundingClientRect();
@@ -130,7 +131,7 @@ export default function Workspace({ projectId }: WorkspaceProps) {
       const pointerX = event.clientX - rect.left;
       const pointerY = event.clientY - rect.top;
 
-      // 브라우저가 전달하는 휠 이동량을 픽셀 기준으로 환산한다.
+      // 휠 이동량 픽셀로 환산
       let delta = event.deltaY;
 
       if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) {
@@ -139,8 +140,9 @@ export default function Workspace({ projectId }: WorkspaceProps) {
         delta *= rect.height;
       }
 
+      //부드러운 확대축소
       const limitedDelta = Math.max(-200, Math.min(delta, 200));
-      const factor = Math.exp(-limitedDelta * 0.002);
+      const factor = Math.exp(-limitedDelta * 0.002); 
 
       setCamera((current) => {
         const zoom = Math.max(0.1, Math.min(current.zoom * factor, 2));
@@ -154,7 +156,7 @@ export default function Workspace({ projectId }: WorkspaceProps) {
           x: pointerX - canvasX * zoom,
           y: pointerY - canvasY * zoom,
           zoom,
-        };
+        }; //맞춰서 카메라 위치 변경
       });
     }
 
@@ -285,11 +287,11 @@ export default function Workspace({ projectId }: WorkspaceProps) {
     const width = 320;
     const height = 220;
 
-    // 현재 화면 중앙을 캔버스 좌표로 변환한다.
+    // 현재 화면 중앙 캔버스 좌표 구하기
     const centerX = (rect.width / 2 - camera.x) / camera.zoom;
     const centerY = (rect.height / 2 - camera.y) / camera.zoom;
 
-    // 연속 생성 시 완전히 같은 위치에 겹치지 않도록 한다.
+    // 여러개 생성할때 오프셋 주기
     const offset = (workspace.nodes.length % 6) * 24;
 
     const x = Math.max(
