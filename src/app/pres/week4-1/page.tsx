@@ -128,22 +128,14 @@ export default function Week4TextPage() {
             <p className="font-medium text-violet-300">
               NONO / 4주차 개발 발표
             </p>
-            <Link
-              href="/pres/week4"
-              className="text-neutral-400 hover:text-white"
-            >
-              다이어그램 버전 보기 ↗
-            </Link>
           </div>
           <h1 className="mt-10 text-4xl leading-tight font-semibold tracking-tight sm:text-6xl">
             작업 공간 구현
-            <br />
-            <span className="text-neutral-400">입력에서 화면 반영까지</span>
           </h1>
           <p className="mt-6 max-w-2xl text-lg leading-8 text-neutral-300">
             캔버스와 텍스트 노드를 실제 프로젝트 페이지에 연결하고,
             <br className="hidden sm:block" />
-            사용자 조작이 함수·상태·렌더링으로 이어지는 과정을 구현했습니다.
+            사용자 조작이 함수·상태·렌더링으로 이어지는 과정을 구현
           </p>
           <div className="mt-8 flex flex-wrap gap-2 text-xs text-neutral-300">
             {[
@@ -185,18 +177,9 @@ export default function Week4TextPage() {
           className={sectionClass}
         >
           <Heading id="progress-title" number="01" eyebrow="SCOPE">
-            데모에서 실제 프로젝트 작업 공간으로
+            캔버스와 텍스트 노드 기반 작업 공간
           </Heading>
-          <div className="mt-8 grid gap-5 md:grid-cols-2">
-            <article className={cardClass}>
-              <p className="text-sm text-neutral-400">3주차</p>
-              <h3 className="mt-3 text-xl font-medium">
-                별도의 발표용 프로토타입
-              </h3>
-              <p className="mt-3 leading-7 text-neutral-300">
-                pres/demo에서 캔버스의 사용 방식을 먼저 시연했습니다.
-              </p>
-            </article>
+          <div className="mt-8">
             <article className="rounded-2xl border border-violet-400/40 bg-violet-400/5 p-6">
               <p className="text-sm text-violet-300">4주차</p>
               <h3 className="mt-3 text-xl font-medium">
@@ -238,7 +221,7 @@ export default function Week4TextPage() {
           <div className="flex flex-wrap items-end justify-between gap-5">
             <div>
               <Heading id="demo-title" number="02" eyebrow="LIVE DEMO">
-                직접 조작하며 확인하기
+                작업공간
               </Heading>
             </div>
             <Link
@@ -258,10 +241,6 @@ export default function Week4TextPage() {
               className="h-[560px] w-full border-0 sm:h-[680px]"
             />
           </div>
-          <p className="mt-4 text-sm leading-7 text-amber-200/90">
-            현재 내용은 메모리에만 유지됩니다. 새로고침하면 초기화되며, 위
-            시연과 새 탭은 서로 별도의 상태입니다.
-          </p>
         </section>
 
         <section
@@ -285,10 +264,6 @@ export default function Week4TextPage() {
               </article>
             ))}
           </div>
-          <p className="mt-5 text-sm leading-7 text-neutral-400">
-            파일 경로는 src/ 기준입니다. page.tsx는 서버 컴포넌트, Workspace는
-            사용자 입력을 처리하는 클라이언트 컴포넌트입니다.
-          </p>
           <div className="mt-8 grid gap-5 md:grid-cols-2">
             <CodeBlock
               label="types.ts · 문서 내용과 화면 상태를 분리"
