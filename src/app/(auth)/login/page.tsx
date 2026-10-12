@@ -1,6 +1,17 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import LoginForm from "@/features/auth/login-form";
+import { getLoginDestination } from "@/features/auth/login-destination";
+import { getSession } from "@/lib/session";
 
-export default function LoginPage() {
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ next?: string | string[] }>;
+}) {
+  const destination = getLoginDestination((await searchParams).next);
+  if (await getSession()) redirect(destination);
+
   return (
     <main className="flex min-h-screen flex-col items-center justify-center">
       <div className="flex w-80 flex-col items-start">
@@ -11,31 +22,7 @@ export default function LoginPage() {
           이전
         </Link>
         <h1 className="pb-4 text-2xl">로그인</h1>
-        <form>
-          <input
-            className="mb-5 block rounded-xl border border-neutral-700 py-2 pl-3"
-            type="text"
-            placeholder="아이디 입력"
-            id="username"
-            name="username"
-            autoComplete="username"
-          />
-          <input
-            className="mb-5 block rounded-xl border border-neutral-700 py-2 pl-3"
-            type="password"
-            placeholder="비밀번호 입력"
-            id="password"
-            name="password"
-            autoComplete="current-password"
-          />
-
-          <button
-            className="rounded-md bg-black px-4 py-2 text-white hover:bg-neutral-800"
-            type="submit"
-          >
-            로그인
-          </button>
-        </form>
+        <LoginForm destination={destination} />
       </div>
     </main>
   );

@@ -2,15 +2,32 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createWorkspace } from "./create-workspace";
 import { createNodeId } from "./create-node-id";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import TextNodeView from "./text-node-view";
+import { z } from "zod";
+import {
+  writeWorkspaceDraft,
+  readWorkspaceDrafts,
+  removeWorkspaceDraft,
+  type WorkspaceDraft,
+} from "./workspace-draft";
 
-import type { Camera, Point, TextNode, TextNodeContentPatch } from "./types";
+
+import type {
+  Camera,
+  Point,
+  TextNode,
+  TextNodeContentPatch,
+  WorkspaceDocument,
+} from "./types";
 
 type WorkspaceProps = {
   projectId: string;
+  projectTitle: string;
+  initialDocument: WorkspaceDocument;
+  initialVersion: number;
+  ownerId: string;
 };
 
 type Gesture =
@@ -29,8 +46,77 @@ type Gesture =
     zoom: number;
   };
 
-export default function Workspace({ projectId }: WorkspaceProps) {
-  const [workspace, setWorkspace] = useState(createWorkspace);
+export default function Workspace({
+  ownerId,
+  projectId,
+  projectTitle,
+  initialDocument,
+  initialVersion,
+}: WorkspaceProps) {
+  const [workspace, setWorkspace] =
+    useState<WorkspaceDocument>(initialDocument);
+
+  const [savedDocument, setSavedDocument] =
+    useState<WorkspaceDocument>(initialDocument);
+  const [documentVersion, setDocumentVersion] =
+    useState(initialVersion);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const savingRef = useRef(false);
+  const draftIdRef = useRef<string | null>(null);
+  const [draftError, setDraftError] = useState("");
+
+  const [recoveryDrafts, setRecoveryDrafts] =
+    useState<WorkspaceDraft[]>([]);
+  const [recoveryError, setRecoveryError] = useState("");
+
+
+  const hasUnsavedChanges = workspace !== savedDocument;
+  const persistDraft = useCallback(() => {
+    try {
+      if (!hasUnsavedChanges) {
+        // 서버에 저장된 상태라면 현재 세션의 임시본만 삭제
+        if (draftIdRef.current) {
+          removeWorkspaceDraft(
+            ownerId,
+            projectId,
+            draftIdRef.current,
+          );
+        }
+
+        setDraftError("");
+        return;
+      }
+
+      if (!draftIdRef.current) {
+        draftIdRef.current = createNodeId();
+      }
+
+      writeWorkspaceDraft({
+        formatVersion: 1,
+        draftId: draftIdRef.current,
+        ownerId,
+        projectId,
+        baseVersion: documentVersion,
+        savedAt: Date.now(),
+        document: workspace,
+      });
+
+      setDraftError("");
+    } catch {
+      setDraftError(
+        "브라우저 임시 저장에 실패했습니다. 저장 공간이나 브라우저 설정을 확인해주세요. 서버 저장은 별도로 시도할 수 있습니다.",
+      );
+    }
+  }, [
+    ownerId,
+    projectId,
+    documentVersion,
+    workspace,
+    hasUnsavedChanges,
+  ]);
+
+  // 기존 camera, viewportRef, gestureRef 등은 여기 아래에 그대로 유지
 
   const [camera, setCamera] = useState<Camera>({
     x: 32,
@@ -142,7 +228,7 @@ export default function Workspace({ projectId }: WorkspaceProps) {
 
       //부드러운 확대축소
       const limitedDelta = Math.max(-200, Math.min(delta, 200));
-      const factor = Math.exp(-limitedDelta * 0.002); 
+      const factor = Math.exp(-limitedDelta * 0.002);
 
       setCamera((current) => {
         const zoom = Math.max(0.1, Math.min(current.zoom * factor, 2));
@@ -168,6 +254,69 @@ export default function Workspace({ projectId }: WorkspaceProps) {
       viewport.removeEventListener("wheel", handleWheel);
     };
   }, []);
+
+  useEffect(() => { // 새로 고침 할 때 변경 사항이 있으면 진짜 새로고침 할건지 물어보게 하기
+    if (!hasUnsavedChanges) return;
+
+    function handleBeforeUnload(event: BeforeUnloadEvent) {
+      event.preventDefault();
+      event.returnValue = true;
+    }
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, [hasUnsavedChanges]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(persistDraft, 500);
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === "hidden") {
+        persistDraft();
+      }
+    }
+
+    window.addEventListener("beforeunload", persistDraft);
+    window.addEventListener("pagehide", persistDraft);
+    document.addEventListener(
+      "visibilitychange",
+      handleVisibilityChange,
+    );
+
+    return () => {
+      window.clearTimeout(timer);
+
+      window.removeEventListener(
+        "beforeunload",
+        persistDraft,
+      );
+      window.removeEventListener("pagehide", persistDraft);
+      document.removeEventListener(
+        "visibilitychange",
+        handleVisibilityChange,
+      );
+    };
+  }, [persistDraft]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      try {
+        setRecoveryDrafts(
+          readWorkspaceDrafts(ownerId, projectId),
+        );
+        setRecoveryError("");
+      } catch {
+        setRecoveryError(
+          "브라우저에 보관된 임시 작업을 조회하지 못했습니다.",
+        );
+      }
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [ownerId, projectId]);
 
   function startPan(event: ReactPointerEvent<HTMLDivElement>) {
     if (event.button !== 1 || gestureRef.current) return;
@@ -345,18 +494,169 @@ export default function Workspace({ projectId }: WorkspaceProps) {
 
     setSelectedNodeId(null);
   }
+  async function saveWorkspace() {
+    if (savingRef.current || gestureRef.current) return;
+
+    savingRef.current = true;
+    setIsSaving(true);
+    setSaveError("");
+
+    // 저장을 시작한 시점의 문서와 버전
+    const documentToSave = workspace;
+    const versionToSave = documentVersion;
+
+    try {
+      const response = await fetch(
+        `/api/projects/${projectId}/document`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            document: documentToSave,
+            expectedVersion: versionToSave,
+          }),
+        },
+      );
+
+      if (!response.ok) {
+        setSaveError(
+          response.status === 409
+            ? "다른 화면에서 먼저 저장했습니다. 현재 작업은 유지되지만 저장되지 않았습니다. 새로고침하면 현재 변경 사항이 사라질 수 있습니다."
+            : response.status === 401
+              ? "로그인이 만료되었습니다."
+              : response.status === 400
+                ? "문서가 저장 조건에 맞지 않습니다. 제목·본문 길이와 노드 수를 확인해주세요."
+                : "저장하지 못했습니다. 잠시 후 다시 시도해주세요.",
+        );
+        return;
+      }
+
+      const result = z.object({
+        documentVersion: z.number().int().nonnegative(),
+      }).safeParse(await response.json());
+
+      if (
+        !result.success ||
+        result.data.documentVersion !== versionToSave + 1
+      ) {
+        setSaveError(
+          "저장 결과를 확인하지 못했습니다. 현재 작업을 유지한 채 서버 상태를 확인해주세요.",
+        );
+        return;
+      }
+
+      setDocumentVersion(result.data.documentVersion);
+      setSavedDocument(documentToSave);
+    } catch {
+      setSaveError(
+        "저장 결과를 확인하지 못했습니다. 연결이 끊겼거나 응답을 받지 못했을 수 있습니다. 현재 작업은 유지됩니다.",
+      );
+    } finally {
+      savingRef.current = false;
+      setIsSaving(false);
+    }
+  }
+
+  function restoreDraft(draftId: string) {
+    if (savingRef.current) return;
+
+    try {
+      // 목록을 띄운 뒤 다른 탭에서 바뀌었을 수 있어 다시 읽는다.
+      const draft = readWorkspaceDrafts(
+        ownerId,
+        projectId,
+      ).find((item) => item.draftId === draftId);
+
+      if (!draft) {
+        setRecoveryError(
+          "해당 임시 작업이 없어졌습니다. 다시 접속해서 목록을 확인해주세요.",
+        );
+        return;
+      }
+
+      if (
+        hasUnsavedChanges &&
+        !window.confirm(
+          "현재 화면의 미저장 편집 내용을 선택한 임시 작업으로 교체할까요?",
+        )
+      ) {
+        return;
+      }
+
+      clearGesture();
+
+      setWorkspace(draft.document);
+      setDocumentVersion(draft.baseVersion);
+      setSelectedNodeId(null);
+      setSaveError("");
+      setRecoveryError("");
+
+      // savedDocument는 변경하지 않는다.
+      // 복구한 내용은 아직 서버에 저장된 것이 아니다.
+    } catch {
+      setRecoveryError(
+        "임시 작업을 불러오지 못했습니다.",
+      );
+    }
+  }
+
+  function deleteRecoveryDraft(draftId: string) {
+    if (savingRef.current) return;
+
+    if (
+      !window.confirm(
+        "이 임시본을 브라우저에서 삭제할까요? 되돌릴 수 없습니다. 다른 탭에서 편집 중인 작업이라면 그 탭의 복구용 임시본일 수도 있습니다.",
+      )
+    ) {
+      return;
+    }
+
+    try {
+      removeWorkspaceDraft(
+        ownerId,
+        projectId,
+        draftId,
+      );
+
+      setRecoveryDrafts((current) =>
+        current.filter((draft) => draft.draftId !== draftId),
+      );
+
+      setRecoveryError("");
+    } catch {
+      setRecoveryError(
+        "임시 작업을 삭제하지 못했습니다.",
+      );
+    }
+  }
+
   return (
     <main className="fixed inset-0 flex flex-col bg-neutral-200 text-neutral-900">
       <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-3 border-b border-neutral-300 bg-white px-4 py-2">
         <Link
           href="/dashboard"
+          onNavigate={(event) => {
+            if (
+              hasUnsavedChanges &&
+              !window.confirm(
+                "저장하지 않은 변경 사항이 있습니다. 프로젝트 목록으로 이동할까요?",
+              )
+            ) {
+              event.preventDefault();
+              return;
+            }
+
+            persistDraft();
+          }}
           className="shrink-0 text-sm text-neutral-600 hover:text-neutral-900"
         >
           ← 프로젝트 목록
         </Link>
 
         <h1 className="min-w-0 flex-1 truncate text-sm font-medium">
-          작업 공간 · {projectId}
+          작업 공간 · {projectTitle}
         </h1>
 
         <span className="ml-auto shrink-0 text-sm text-neutral-500">
@@ -384,8 +684,96 @@ export default function Workspace({ projectId }: WorkspaceProps) {
         >
           화면 맞춤
         </button>
-      </header>
+        <button
+          type="button"
+          onClick={saveWorkspace}
+          disabled={isSaving}
+          className="shrink-0 rounded border border-neutral-300 px-3 py-1.5 text-sm hover:bg-neutral-100 disabled:cursor-wait disabled:opacity-50"
+        >
+          {isSaving ? "저장 중…" : "저장"}
+        </button>
 
+        <span
+          role="status"
+          className="text-xs text-neutral-500"
+        >
+          {isSaving
+            ? "문서를 저장하고 있습니다."
+            : hasUnsavedChanges
+              ? "저장하지 않은 변경 사항"
+              : "변경 사항 없음"}
+        </span>
+
+        {saveError && (
+          <p role="alert" className="w-full text-xs text-red-600">
+            {saveError}
+          </p>
+        )}
+        {draftError && (
+          <p role="alert" className="w-full text-xs text-amber-700">
+            {draftError}
+          </p>
+        )}
+      </header>
+      {recoveryError && (
+        <p
+          role="alert"
+          className="shrink-0 bg-amber-50 px-4 py-2 text-xs text-amber-800"
+        >
+          {recoveryError}
+        </p>
+      )}
+
+      {recoveryDrafts.length > 0 && (
+        <section
+          aria-label="임시 작업 복구"
+          className="max-h-48 shrink-0 overflow-y-auto border-b border-amber-200 bg-amber-50 px-4 py-3"
+        >
+          <h2 className="text-sm font-medium">
+            브라우저에 보관된 임시 작업이 있습니다.
+          </h2>
+
+          <p className="mt-1 text-xs text-neutral-600">
+            복구는 현재 화면에만 적용됩니다. 서버 저장은 별도로
+            진행해주세요. 다른 탭에서 작업 중인 임시본도 표시될 수 있습니다.
+          </p>
+
+          <ul className="mt-2 space-y-2">
+            {recoveryDrafts.map((draft) => (
+              <li
+                key={draft.draftId}
+                className="flex flex-wrap items-center gap-2 text-xs"
+              >
+                <span className="flex-1">
+                  {new Date(draft.savedAt).toLocaleString("ko-KR")}
+                  {" · "}
+                  노드 {draft.document.nodes.length}개
+                  {" · "}
+                  기준 버전 {draft.baseVersion}
+                </span>
+
+                <button
+                  type="button"
+                  disabled={isSaving}
+                  onClick={() => restoreDraft(draft.draftId)}
+                  className="rounded border border-neutral-300 bg-white px-3 py-1 disabled:opacity-50"
+                >
+                  복구
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isSaving}
+                  onClick={() => deleteRecoveryDraft(draft.draftId)}
+                  className="rounded border border-neutral-300 bg-white px-3 py-1 text-red-700 disabled:opacity-50"
+                >
+                  삭제
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {/* 뷰포트  */}
       <div
         ref={viewportRef}

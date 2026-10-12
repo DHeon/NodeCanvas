@@ -1,16 +1,18 @@
 import Link from "next/link";
-import { connection } from "next/server";
+import LogoutButton from "@/features/auth/logout-button";
+import CreateProjectForm from "@/features/projects/create-project-form";
+import { requireSession } from "@/lib/session";
+import RenameProjectForm from "@/features/projects/rename-project-form";
+import DeleteProjectForm from "@/features/projects/delete-project-form";
 
 import { prisma } from "@/lib/prisma";
 
 export default async function DashboardPage() {
-  await connection();
+  const session = await requireSession();
 
   const projects = await prisma.project.findMany({
     where: {
-      owner: {
-        email: "demo@nono.local",
-      },
+      ownerId: session.user.id,
     },
     orderBy: {
       updatedAt: "desc",
@@ -23,9 +25,18 @@ export default async function DashboardPage() {
   return (
     <main className="min-h-screen bg-neutral-950 p-10">
       <div className="mx-auto w-full max-w-7xl">
-        <header>
-          <h1 className="text-3xl font-semibold text-white">내 프로젝트</h1>
+        <header className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-semibold text-white">내 프로젝트</h1>
+            <p className="mt-2 text-sm text-neutral-400">
+              {session.user.name} · {session.user.email}
+            </p>
+          </div>
+          <div className="text-white">
+            <LogoutButton />
+          </div>
         </header>
+        <CreateProjectForm />
 
         <section className="mt-10">
           {projects.length === 0 ? (
@@ -33,21 +44,30 @@ export default async function DashboardPage() {
           ) : (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,220px))] gap-5">
               {projects.map((project) => (
-                <Link
+                <article
                   key={project.id}
-                  href={`/projects/${project.id}`}
-                  className="group block rounded-2xl"
+                  className="overflow-hidden rounded-2xl border border-neutral-200 bg-white"
                 >
-                  <article className="grid aspect-square grid-rows-[1fr_auto] overflow-hidden rounded-2xl border border-neutral-200 bg-white">
-                    <div className="flex items-center justify-center bg-neutral-200 text-sm text-neutral-400">
+                  <div className="grid aspect-square grid-rows-[1fr_auto]">
+                    <Link
+                      href={`/projects/${project.id}`}
+                      aria-label={`${project.title} 열기`}
+                      className="flex items-center justify-center bg-neutral-200 text-sm text-neutral-400"
+                    >
                       이미지
-                    </div>
-
-                    <div className="border-t border-neutral-200 px-4 py-3 text-neutral-600">
-                      <h3 className="truncate font-medium">{project.title}</h3>
-                    </div>
-                  </article>
-                </Link>
+                    </Link>
+                    <RenameProjectForm
+                      projectId={project.id}
+                      projectTitle={project.title}
+                    >
+                      <DeleteProjectForm
+                        ownerId={session.user.id}
+                        projectId={project.id}
+                        projectTitle={project.title}
+                      />
+                    </RenameProjectForm>
+                  </div>
+                </article>
               ))}
             </div>
           )}
