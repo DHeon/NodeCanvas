@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import Image from "next/image";
+import dbScreenshot from "../../../../public/pres/week6/1.png";
 
 export const metadata: Metadata = {
   title: "Nono | 5·6주차 기능과 실행 흐름",
@@ -24,7 +25,7 @@ const workflows: Workflow[] = [
   {
     id: "access",
     week: "05",
-    title: "로그인하면 내 프로젝트만 보인다",
+    title: "로그인",
     trigger: "이메일·비밀번호 입력 → 로그인 → 대시보드 진입",
     result:
       "인증된 사용자의 프로젝트만 카드로 표시된다. 비로그인 상태에서는 로그인 페이지로 이동한다.",
@@ -74,61 +75,9 @@ const workflows: Workflow[] = [
       "사용자 ID를 브라우저 입력값으로 결정하지 않는다. 서버에서 확인한 세션이 조회와 수정의 기준이다.",
   },
   {
-    id: "open",
-    week: "05",
-    title: "프로젝트를 만들고 저장된 작업 공간을 연다",
-    trigger: "프로젝트 이름 입력 → 만들기 / 기존 프로젝트 카드 클릭",
-    result:
-      "프로젝트 생성 후 작업 공간으로 이동한다. 기존 프로젝트를 다시 열면 DB 문서로 편집 화면이 초기화된다.",
-    steps: [
-      {
-        layer: "화면",
-        file: "src/features/projects/create-project-form.tsx",
-        fn: "useActionState(createProject)",
-        detail:
-          "이름을 FormData로 서버 액션에 전달하고 생성 중 상태와 오류를 표시한다.",
-      },
-      {
-        layer: "서버 → DB",
-        file: "src/features/projects/actions.ts",
-        fn: "createProject()",
-        detail:
-          "이름을 검증하고 세션에서 ownerId를 결정해 프로젝트를 생성한다. 생성된 ID의 경로로 이동한다.",
-      },
-      {
-        layer: "서버",
-        file: "src/app/(app)/projects/[projectId]/page.tsx",
-        fn: "ProjectPage() → prisma.project.findFirst()",
-        detail:
-          "URL의 프로젝트 ID와 세션 사용자 ID로 조회한다. 없거나 다른 사용자의 프로젝트면 404로 처리한다.",
-      },
-      {
-        layer: "화면",
-        file: "src/app/(app)/projects/[projectId]/page.tsx",
-        fn: "workspaceDocumentSchema → <Workspace />",
-        detail:
-          "document가 null이면 빈 문서를 생성한다. 문서·버전·사용자 ID를 Workspace에 전달한다.",
-      },
-    ],
-    snippets: [
-      {
-        file: "src/features/projects/actions.ts",
-        title: "서버에서 소유자를 결정하고 생성",
-        code: 'const session = await requireSession();\n\nproject = await prisma.project.create({\n  data: {\n    title: result.data,\n    ownerId: session.user.id,\n  },\n  select: { id: true },\n});\n\nredirect("/projects/" + project.id);',
-      },
-      {
-        file: "src/app/(app)/projects/[projectId]/page.tsx",
-        title: "DB 문서를 화면의 초기값으로 전달",
-        code: "const result = workspaceDocumentSchema.safeParse(\n  project.document === null\n    ? createWorkspace()\n    : project.document,\n);\n\n<Workspace\n  initialDocument={result.data}\n  initialVersion={project.documentVersion}\n  ownerId={session.user.id}\n  // 프로젝트 ID와 제목도 함께 전달\n/>",
-      },
-    ],
-    point:
-      "최초 불러오기는 서버 페이지가 직접 DB를 조회한다. GET 문서 API를 다시 호출하는 경로는 아니다. null 문서와 존재하지 않는 프로젝트도 구분한다.",
-  },
-  {
     id: "save",
     week: "05 → 06",
-    title: "저장을 누르면 문서와 버전이 함께 저장된다",
+    title: "문서 저장",
     trigger: "노드 내용·위치 수정 → 저장 버튼 클릭",
     result:
       "성공 응답을 확인한 문서만 저장 기준으로 반영한다. 저장 도중 추가로 수정한 내용은 미저장 상태로 남는다.",
@@ -180,7 +129,7 @@ const workflows: Workflow[] = [
   {
     id: "conflict",
     week: "06",
-    title: "다른 탭이 먼저 저장하면 덮어쓰기를 막는다",
+    title: "덮어쓰기 방지",
     trigger: "같은 버전을 연 두 탭 → A 저장 → B 저장",
     result:
       "A는 저장에 성공하고 버전이 증가한다. 이전 버전으로 저장한 B는 409 응답을 받고, 편집 내용은 화면에 유지된다.",
@@ -227,7 +176,7 @@ const workflows: Workflow[] = [
   {
     id: "recovery",
     week: "06",
-    title: "편집 내용은 임시 보관하고 다시 선택해 복구한다",
+    title: "임시 저장과 복구",
     trigger: "편집 후 0.5초 대기 → 새로고침 → 임시 작업의 복구 버튼",
     result:
       "브라우저에 남은 임시본을 현재 화면으로 불러온다. 서버 문서는 자동 변경하지 않고, 복구한 작업은 미저장 상태로 유지한다.",
@@ -279,7 +228,7 @@ const workflows: Workflow[] = [
   {
     id: "leave",
     week: "06",
-    title: "미저장 상태로 나가면 확인하고 마지막 임시본을 남긴다",
+    title: "미저장 상태 새로고침, 탭 닫기",
     trigger: "저장하지 않은 채 새로고침·탭 닫기 / 프로젝트 목록으로 이동",
     result:
       "이탈을 확인하고 임시 저장을 시도한다. 이동 취소 시 작업 공간에 그대로 남는다.",
@@ -318,7 +267,7 @@ const workflows: Workflow[] = [
   {
     id: "rename",
     week: "06",
-    title: "제목 옆 연필로 수정하고 Enter·바깥 클릭으로 저장한다",
+    title: "제목 수정",
     trigger: "연필 클릭 → 제목 입력 → Enter 또는 바깥 클릭",
     result:
       "새 이름이 DB와 카드에 반영된다. Esc는 취소, 실패는 입력값 유지, 한글 조합 확정용 Enter는 저장하지 않는다.",
@@ -370,7 +319,7 @@ const workflows: Workflow[] = [
   {
     id: "delete",
     week: "06",
-    title: "휴지통으로 확인 후 삭제하고 임시본도 정리한다",
+    title: "프로젝트 삭제",
     trigger: "제목 오른쪽 휴지통 클릭 → 삭제 확인",
     result:
       "프로젝트와 그 안의 서버 문서가 영구 삭제되고 카드가 사라진다. 서버 삭제 성공이 확인되면 현재 브라우저의 해당 임시본을 정리한다.",
@@ -493,7 +442,6 @@ export default function Week6Page() {
               {
                 [
                   "로그인·조회",
-                  "생성·불러오기",
                   "저장",
                   "저장 충돌",
                   "임시본·복구",
@@ -617,6 +565,21 @@ export default function Week6Page() {
                 </p>
               </div>
             </div>
+            {flow.id === "save" && (
+              <figure className="mt-8">
+                <figcaption className="mb-4 text-xl font-medium">
+                  DB 사진
+                </figcaption>
+                <div className="overflow-hidden rounded-xl border border-neutral-800">
+                  <Image
+                    src={dbScreenshot}
+                    alt="문서 저장 후 데이터베이스 화면"
+                    sizes="(min-width: 1280px) 1152px, 100vw"
+                    className="h-auto w-full"
+                  />
+                </div>
+              </figure>
+            )}
           </section>
         ))}
         <section aria-labelledby="next-title" className="py-14 sm:py-20">

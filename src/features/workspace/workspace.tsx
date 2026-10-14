@@ -5,6 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createNodeId } from "./create-node-id";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import TextNodeView from "./text-node-view";
+import WorkspaceToolbar from "./workspace-toolbar";
+import { expandLegacyCanvas } from "./create-workspace";
 import { z } from "zod";
 import {
   writeWorkspaceDraft,
@@ -12,7 +14,6 @@ import {
   removeWorkspaceDraft,
   type WorkspaceDraft,
 } from "./workspace-draft";
-
 
 import type {
   Camera,
@@ -32,19 +33,19 @@ type WorkspaceProps = {
 
 type Gesture =
   | {
-    kind: "pan";
-    pointerId: number;
-    startPointer: Point;
-    startCamera: Point;
-  }
+      kind: "pan";
+      pointerId: number;
+      startPointer: Point;
+      startCamera: Point;
+    }
   | {
-    kind: "node";
-    pointerId: number;
-    startPointer: Point;
-    nodeId: string;
-    startPosition: Point;
-    zoom: number;
-  };
+      kind: "node";
+      pointerId: number;
+      startPointer: Point;
+      nodeId: string;
+      startPosition: Point;
+      zoom: number;
+    };
 
 export default function Workspace({
   ownerId,
@@ -53,35 +54,29 @@ export default function Workspace({
   initialDocument,
   initialVersion,
 }: WorkspaceProps) {
-  const [workspace, setWorkspace] =
-    useState<WorkspaceDocument>(initialDocument);
+  const [workspace, setWorkspace] = useState<WorkspaceDocument>(() =>
+    expandLegacyCanvas(initialDocument),
+  );
 
   const [savedDocument, setSavedDocument] =
     useState<WorkspaceDocument>(initialDocument);
-  const [documentVersion, setDocumentVersion] =
-    useState(initialVersion);
+  const [documentVersion, setDocumentVersion] = useState(initialVersion);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const savingRef = useRef(false);
   const draftIdRef = useRef<string | null>(null);
   const [draftError, setDraftError] = useState("");
 
-  const [recoveryDrafts, setRecoveryDrafts] =
-    useState<WorkspaceDraft[]>([]);
+  const [recoveryDrafts, setRecoveryDrafts] = useState<WorkspaceDraft[]>([]);
   const [recoveryError, setRecoveryError] = useState("");
 
-
-  const hasUnsavedChanges = workspace !== savedDocument;  // 둘이 다른지 비교함. 저장 후 또 수정이 되서 현재 작업 상태와 저장된 작업 상태를 비교
+  const hasUnsavedChanges = workspace !== savedDocument; // 둘이 다른지 비교함. 저장 후 또 수정이 되서 현재 작업 상태와 저장된 작업 상태를 비교
   const persistDraft = useCallback(() => {
     try {
       if (!hasUnsavedChanges) {
         // 서버에 저장된 상태라면 현재 세션의 임시본만 삭제
         if (draftIdRef.current) {
-          removeWorkspaceDraft(
-            ownerId,
-            projectId,
-            draftIdRef.current,
-          );
+          removeWorkspaceDraft(ownerId, projectId, draftIdRef.current);
         }
 
         setDraftError("");
@@ -108,13 +103,7 @@ export default function Workspace({
         "브라우저 임시 저장에 실패했습니다. 저장 공간이나 브라우저 설정을 확인해주세요. 서버 저장은 별도로 시도할 수 있습니다.",
       );
     }
-  }, [
-    ownerId,
-    projectId,
-    documentVersion,
-    workspace,
-    hasUnsavedChanges,
-  ]);
+  }, [ownerId, projectId, documentVersion, workspace, hasUnsavedChanges]);
 
   // 기존 camera, viewportRef, gestureRef 등은 여기 아래에 그대로 유지
 
@@ -124,13 +113,14 @@ export default function Workspace({
     zoom: 0.5,
   });
 
-  const viewportRef = useRef<HTMLDivElement>(null); // DOM관련 크기 측정, 이벤트 연결할 때 
-  const gestureRef = useRef<Gesture | null>(null); //드래그 시작 시 위치와 어떤거 이동할지 
+  const viewportRef = useRef<HTMLDivElement>(null); // DOM관련 크기 측정, 이벤트 연결할 때
+  const gestureRef = useRef<Gesture | null>(null); //드래그 시작 시 위치와 어떤거 이동할지
 
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null); //선택된 노드가 뭔지
   const [isPanning, setIsPanning] = useState(false); //드래그 상태따라 커서 변경
 
-  const fitCanvas = useCallback(() => { //화면 맞춤
+  const fitCanvas = useCallback(() => {
+    //화면 맞춤
     const viewport = viewportRef.current;
 
     if (!viewport || gestureRef.current) return;
@@ -175,7 +165,8 @@ export default function Workspace({
     return () => window.removeEventListener("blur", clearGesture);
   }, [clearGesture]);
 
-  useEffect(() => { //viewportRef의 크기가 바뀌면 fitCanvas
+  useEffect(() => {
+    //viewportRef의 크기가 바뀌면 fitCanvas
     const viewport = viewportRef.current;
 
     if (!viewport) return;
@@ -255,7 +246,8 @@ export default function Workspace({
     };
   }, []);
 
-  useEffect(() => { // 새로 고침 할 때 변경 사항이 있으면 진짜 새로고침 할건지 물어보게 하는 이벤트 리스너설정
+  useEffect(() => {
+    // 새로 고침 할 때 변경 사항이 있으면 진짜 새로고침 할건지 물어보게 하는 이벤트 리스너설정
     if (!hasUnsavedChanges) return;
 
     function handleBeforeUnload(event: BeforeUnloadEvent) {
@@ -281,37 +273,24 @@ export default function Workspace({
 
     window.addEventListener("beforeunload", persistDraft);
     window.addEventListener("pagehide", persistDraft);
-    document.addEventListener(
-      "visibilitychange",
-      handleVisibilityChange,
-    );
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
       window.clearTimeout(timer);
 
-      window.removeEventListener(
-        "beforeunload",
-        persistDraft,
-      );
+      window.removeEventListener("beforeunload", persistDraft);
       window.removeEventListener("pagehide", persistDraft);
-      document.removeEventListener(
-        "visibilitychange",
-        handleVisibilityChange,
-      );
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [persistDraft]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
       try {
-        setRecoveryDrafts(
-          readWorkspaceDrafts(ownerId, projectId),
-        );
+        setRecoveryDrafts(readWorkspaceDrafts(ownerId, projectId));
         setRecoveryError("");
       } catch {
-        setRecoveryError(
-          "브라우저에 보관된 임시 작업을 조회하지 못했습니다.",
-        );
+        setRecoveryError("브라우저에 보관된 임시 작업을 조회하지 못했습니다.");
       }
     }, 0);
 
@@ -494,19 +473,21 @@ export default function Workspace({
 
     setSelectedNodeId(null);
   }
-  async function saveWorkspace() { // 작업공간 저장하기
-    if (savingRef.current || gestureRef.current) return;  //저장 도중이나 드래그 도중에 저장 막음.
+  async function saveWorkspace() {
+    // 작업공간 저장하기
+    if (savingRef.current || gestureRef.current) return; //저장 도중이나 드래그 도중에 저장 막음.
 
     savingRef.current = true;
     setIsSaving(true);
     setSaveError("");
 
     // 저장을 시작한 시점의 작업공간과 버전이 저장이 됨
-    const documentToSave = workspace;  
-    const versionToSave = documentVersion;  
+    const documentToSave = workspace;
+    const versionToSave = documentVersion;
 
     try {
-      const response = await fetch(  //projectId를 통해 작업공간의 json 데이터를 저장함
+      const response = await fetch(
+        //projectId를 통해 작업공간의 json 데이터를 저장함
         `/api/projects/${projectId}/document`,
         {
           method: "PUT",
@@ -533,9 +514,11 @@ export default function Workspace({
         return;
       }
 
-      const result = z.object({
-        documentVersion: z.number().int().nonnegative(),
-      }).safeParse(await response.json());
+      const result = z
+        .object({
+          documentVersion: z.number().int().nonnegative(),
+        })
+        .safeParse(await response.json());
 
       if (
         !result.success ||
@@ -547,7 +530,7 @@ export default function Workspace({
         return;
       }
 
-      setDocumentVersion(result.data.documentVersion);  //
+      setDocumentVersion(result.data.documentVersion); //
       setSavedDocument(documentToSave); // 현재 작업 중인 문서와 저장 버튼을 눌렀을 때의 문서는 다름.
     } catch {
       setSaveError(
@@ -564,10 +547,9 @@ export default function Workspace({
 
     try {
       // 목록을 띄운 뒤 다른 탭에서 바뀌었을 수 있어 다시 읽는다.
-      const draft = readWorkspaceDrafts(
-        ownerId,
-        projectId,
-      ).find((item) => item.draftId === draftId);
+      const draft = readWorkspaceDrafts(ownerId, projectId).find(
+        (item) => item.draftId === draftId,
+      );
 
       if (!draft) {
         setRecoveryError(
@@ -587,7 +569,7 @@ export default function Workspace({
 
       clearGesture();
 
-      setWorkspace(draft.document);
+      setWorkspace(expandLegacyCanvas(draft.document));
       setDocumentVersion(draft.baseVersion);
       setSelectedNodeId(null);
       setSaveError("");
@@ -596,9 +578,7 @@ export default function Workspace({
       // savedDocument는 변경하지 않는다.
       // 복구한 내용은 아직 서버에 저장된 것이 아니다.
     } catch {
-      setRecoveryError(
-        "임시 작업을 불러오지 못했습니다.",
-      );
+      setRecoveryError("임시 작업을 불러오지 못했습니다.");
     }
   }
 
@@ -614,11 +594,7 @@ export default function Workspace({
     }
 
     try {
-      removeWorkspaceDraft(
-        ownerId,
-        projectId,
-        draftId,
-      );
+      removeWorkspaceDraft(ownerId, projectId, draftId);
 
       setRecoveryDrafts((current) =>
         current.filter((draft) => draft.draftId !== draftId),
@@ -626,9 +602,7 @@ export default function Workspace({
 
       setRecoveryError("");
     } catch {
-      setRecoveryError(
-        "임시 작업을 삭제하지 못했습니다.",
-      );
+      setRecoveryError("임시 작업을 삭제하지 못했습니다.");
     }
   }
 
@@ -664,13 +638,6 @@ export default function Workspace({
         </span>
         <button
           type="button"
-          onClick={addTextNode}
-          className="shrink-0 rounded border border-neutral-300 px-3 py-1.5 text-sm hover:bg-neutral-100"
-        >
-          + 텍스트
-        </button>
-        <button
-          type="button"
           onClick={deleteSelectedNode}
           disabled={!selectedNodeId}
           className="shrink-0 rounded border border-neutral-300 px-3 py-1.5 text-sm hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-40"
@@ -693,10 +660,7 @@ export default function Workspace({
           {isSaving ? "저장 중…" : "저장"}
         </button>
 
-        <span
-          role="status"
-          className="text-xs text-neutral-500"
-        >
+        <span role="status" className="text-xs text-neutral-500">
           {isSaving
             ? "문서를 저장하고 있습니다."
             : hasUnsavedChanges
@@ -734,8 +698,8 @@ export default function Workspace({
           </h2>
 
           <p className="mt-1 text-xs text-neutral-600">
-            복구는 현재 화면에만 적용됩니다. 서버 저장은 별도로
-            진행해주세요. 다른 탭에서 작업 중인 임시본도 표시될 수 있습니다.
+            복구는 현재 화면에만 적용됩니다. 서버 저장은 별도로 진행해주세요.
+            다른 탭에서 작업 중인 임시본도 표시될 수 있습니다.
           </p>
 
           <ul className="mt-2 space-y-2">
@@ -747,8 +711,7 @@ export default function Workspace({
                 <span className="flex-1">
                   {new Date(draft.savedAt).toLocaleString("ko-KR")}
                   {" · "}
-                  노드 {draft.document.nodes.length}개
-                  {" · "}
+                  노드 {draft.document.nodes.length}개{" · "}
                   기준 버전 {draft.baseVersion}
                 </span>
 
@@ -775,60 +738,62 @@ export default function Workspace({
         </section>
       )}
       {/* 뷰포트  */}
-      <div
-        ref={viewportRef}
-        tabIndex={-1}
-        className="relative min-h-0 flex-1 overflow-hidden outline-none"
-        style={{
-          cursor: isPanning ? "grabbing" : "default",
-        }}
-        aria-label="작업 공간 뷰포트"
-        onPointerDownCapture={startPan}
-        onPointerDown={(event) => {
-          if (
-            event.button === 0 &&
-            !gestureRef.current &&
-            event.target instanceof Element &&
-            !event.target.closest("[data-node-id]")
-          ) {
-            setSelectedNodeId(null);
-            event.currentTarget.focus({ preventScroll: true });
-          }
-        }}
-        onPointerMove={moveGesture}
-        onPointerUp={endGesture}
-        onPointerCancel={endGesture}
-        onLostPointerCapture={endGesture}
-        onAuxClick={(event) => {
-          if (event.button === 1) event.preventDefault();
-        }}
-      >
-
-        {/* 캔버스 */}
+      <div className="relative flex min-h-0 flex-1">
+        <WorkspaceToolbar onAddTextNode={addTextNode} />
         <div
-          className="absolute top-0 left-0 origin-top-left bg-white shadow-sm"
+          ref={viewportRef}
+          tabIndex={-1}
+          className="relative min-h-0 flex-1 overflow-hidden outline-none"
           style={{
-            width: workspace.canvas.width,
-            height: workspace.canvas.height,
-            transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.zoom})`,
+            cursor: isPanning ? "grabbing" : "default",
+          }}
+          aria-label="작업 공간 뷰포트"
+          onPointerDownCapture={startPan}
+          onPointerDown={(event) => {
+            if (
+              event.button === 0 &&
+              !gestureRef.current &&
+              event.target instanceof Element &&
+              !event.target.closest("[data-node-id]")
+            ) {
+              setSelectedNodeId(null);
+              event.currentTarget.focus({ preventScroll: true });
+            }
+          }}
+          onPointerMove={moveGesture}
+          onPointerUp={endGesture}
+          onPointerCancel={endGesture}
+          onLostPointerCapture={endGesture}
+          onAuxClick={(event) => {
+            if (event.button === 1) event.preventDefault();
           }}
         >
-          {workspace.nodes.length === 0 && (
-            <div className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-neutral-400">
-              빈 작업 공간
-            </div>
-          )}
+          {/* 캔버스 */}
+          <div
+            className="absolute top-0 left-0 origin-top-left bg-white shadow-sm"
+            style={{
+              width: workspace.canvas.width,
+              height: workspace.canvas.height,
+              transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.zoom})`,
+            }}
+          >
+            {workspace.nodes.length === 0 && (
+              <div className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-neutral-400">
+                빈 작업 공간
+              </div>
+            )}
 
-          {workspace.nodes.map((node) => (
-            <TextNodeView
-              key={node.id}
-              node={node}
-              selected={selectedNodeId === node.id}
-              onSelect={setSelectedNodeId}
-              onDragStart={startNodeDrag}
-              onChange={updateTextNode}
-            />
-          ))}
+            {workspace.nodes.map((node) => (
+              <TextNodeView
+                key={node.id}
+                node={node}
+                selected={selectedNodeId === node.id}
+                onSelect={setSelectedNodeId}
+                onDragStart={startNodeDrag}
+                onChange={updateTextNode}
+              />
+            ))}
+          </div>
         </div>
       </div>
     </main>

@@ -26,7 +26,7 @@ export default function TextNodeView({
         if (event.button === 0) onSelect(node.id);
       }}
       onFocus={() => onSelect(node.id)}
-      className={`absolute flex flex-col overflow-hidden rounded-lg border bg-white shadow-sm ${
+      className={`absolute flex flex-col overflow-hidden rounded-2xl border bg-white shadow-sm ${
         selected ? "border-blue-500 ring-2 ring-blue-200" : "border-neutral-300"
       }`}
       style={{
