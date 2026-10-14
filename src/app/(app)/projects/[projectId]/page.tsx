@@ -49,7 +49,6 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
       projectTitle={project.title}
       initialDocument={result.data}  //저장된 초기 데이터를 넘김
       initialVersion={project.documentVersion}
-      ownerId={session.user.id}
     />
   );
 }

@@ -3,10 +3,8 @@
 import { useActionState } from "react";
 
 import { deleteProject } from "./actions";
-import { removeProjectDrafts } from "../workspace/workspace-draft";
 
 type DeleteProjectFormProps = {
-  ownerId: string;
   projectId: string;
   projectTitle: string;
 };
@@ -17,7 +15,6 @@ type DeleteState = {
 };
 
 export default function DeleteProjectForm({
-  ownerId,
   projectId,
   projectTitle,
 }: DeleteProjectFormProps) {
@@ -33,17 +30,6 @@ export default function DeleteProjectForm({
             "삭제 결과를 확인하지 못했습니다. 목록을 새로고침해서 확인해주세요.",
           success: false,
         };
-      }
-
-      // 서버 삭제 실패 시 복구용 임시본을 보존
-      if (!result.success) return result;
-
-      try {
-        removeProjectDrafts(ownerId, projectId);
-      } catch {
-        window.alert(
-          "서버의 프로젝트는 삭제됐지만 브라우저 임시본 정리에 실패했습니다.",
-        );
       }
 
       return result;
@@ -64,7 +50,7 @@ export default function DeleteProjectForm({
         }
         if (
           !window.confirm(
-            `"${projectTitle}" 프로젝트를 삭제할까요?\n저장된 캔버스 내용과 이 브라우저의 임시본이 삭제됩니다. 되돌릴 수 없습니다.`,
+            `"${projectTitle}" 프로젝트를 삭제할까요?\n저장된 캔버스 내용이 삭제됩니다. 되돌릴 수 없습니다.`,
           )
         ) {
           event.preventDefault();

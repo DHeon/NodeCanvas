@@ -77,54 +77,59 @@ const workflows: Workflow[] = [
   {
     id: "save",
     week: "05 → 06",
-    title: "문서 저장",
-    trigger: "노드 내용·위치 수정 → 저장 버튼 클릭",
+    title: "문서 수동 저장",
+    trigger: "노드 내용·위치 수정 → 저장 버튼 클릭 → 서버에 문서 전송",
     result:
-      "성공 응답을 확인한 문서만 저장 기준으로 반영한다. 저장 도중 추가로 수정한 내용은 미저장 상태로 남는다.",
+      "저장 버튼을 눌렀을 때의 문서가 DB에 반영된다. 요청 중 추가 편집한 내용은 미저장 상태로 남으며, 다음 저장 버튼 클릭으로 저장한다.",
     steps: [
       {
         layer: "화면",
         file: "src/features/workspace/workspace.tsx",
+        fn: "updateTextNode() / moveGesture() → setWorkspace()",
+        detail:
+          "내용과 위치 변경은 React의 workspace 상태에 반영한다. 편집 자체로 저장 요청을 보내지는 않으며, 카메라·선택 상태는 저장 문서에 포함하지 않는다.",
+      },
+      {
+        layer: "저장 버튼",
+        file: "src/features/workspace/workspace.tsx",
         fn: "onClick → saveWorkspace()",
         detail:
-          "중복 요청과 드래그 중 저장을 막고, 버튼을 누른 순간의 문서와 버전을 기억한다.",
+          "저장 중·드래그 중·버전 충돌 상태와 미저장 여부를 확인한다. 저장 버튼을 누른 시점의 documentToSave와 documentVersionRef.current를 사용해 요청한다.",
       },
       {
-        layer: "요청",
-        file: "src/features/workspace/workspace.tsx",
-        fn: "fetch() · PUT /api/projects/[projectId]/document",
+        layer: "요청 → 서버 → DB",
+        file: "src/features/workspace/workspace-save-client.ts → src/app/api/projects/[projectId]/document/route.ts",
+        fn: "saveWorkspaceDocument() → PUT() → updateMany()",
         detail:
-          "document와 expectedVersion을 JSON으로 전송한다. 저장 중에도 편집한 문서는 따로 유지한다.",
-      },
-      {
-        layer: "서버 → DB",
-        file: "src/app/api/projects/[projectId]/document/route.ts",
-        fn: "PUT() → saveDocumentSchema → updateMany()",
-        detail:
-          "세션·Origin·JSON·문서 형식을 검증한다. 소유자와 버전이 맞는 프로젝트의 document를 저장한다.",
+          "document와 expectedVersion을 전송한다. 서버는 세션·소유권·문서 형식·버전을 검증한 뒤 문서를 저장하고 버전을 증가시킨다.",
       },
       {
         layer: "응답 → 화면",
         file: "src/features/workspace/workspace.tsx",
-        fn: "setDocumentVersion() · setSavedDocument()",
+        fn: "documentVersionRef 갱신 → setSavedDocument()",
         detail:
-          "응답 버전을 검증하고 요청 당시 문서를 저장 기준으로 설정한다. 실패하면 편집 내용을 초기화하지 않는다.",
+          "성공한 요청의 문서를 저장 기준으로 삼는다. workspace와 savedDocument가 다르면 미저장 상태를 표시한다. 그 사이에 생긴 추가 편집은 저장 완료로 처리하지 않는다.",
       },
     ],
     snippets: [
       {
         file: "src/features/workspace/workspace.tsx",
-        title: "저장 요청 당시의 문서를 기억",
-        code: "const documentToSave = workspace;\nconst versionToSave = documentVersion;\n\n// PUT 요청 body\nJSON.stringify({\n  document: documentToSave,\n  expectedVersion: versionToSave,\n});\n\n// 성공 응답 검증 후\nsetDocumentVersion(result.data.documentVersion);\nsetSavedDocument(documentToSave);",
+        title: "저장 버튼을 눌러야 요청이 시작된다",
+        code: '<button\n  onClick={saveWorkspace}\n  disabled={isSaving || hasConflict || !hasUnsavedChanges}\n>\n  {isSaving ? "저장 중…" : "저장"}\n</button>',
+      },
+      {
+        file: "src/features/workspace/workspace.tsx · saveWorkspace()",
+        title: "버튼을 누른 시점의 문서와 버전으로 저장",
+        code: "const documentToSave = workspace;\nconst versionToSave = documentVersionRef.current;\n\nconst version = await saveWorkspaceDocument(\n  projectId,\n  documentToSave,\n  versionToSave,\n);\n\ndocumentVersionRef.current = version;\nsetSavedDocument(documentToSave);",
       },
       {
         file: "src/features/workspace/workspace.tsx",
-        title: "추가 편집을 저장 완료로 오인하지 않기",
-        code: "const hasUnsavedChanges = workspace !== savedDocument;\n\n// 저장 중 편집하면 workspace는 새 객체가 된다.\n// savedDocument는 요청 당시 documentToSave를 가리킨다.\n// 따라서 추가 편집은 계속 미저장 상태다.",
+        title: "현재 편집과 저장 성공한 문서를 비교",
+        code: "const hasUnsavedChanges = workspace !== savedDocument;",
       },
     ],
     point:
-      "5주차에는 문서 저장·불러오기를 연결했고, 6주차에는 중복 요청·실패·저장 중 추가 편집을 구분하도록 안정화했다. 카메라와 선택 상태는 문서 저장 대상이 아니다.",
+      "저장 요청을 시작한 것과 저장에 성공한 것은 다르다. 성공 응답을 확인한 문서만 저장 기준으로 반영하며, 이후 편집은 사용자가 다시 저장해야 한다.",
   },
   {
     id: "conflict",
@@ -158,9 +163,9 @@ const workflows: Workflow[] = [
       {
         layer: "화면",
         file: "src/features/workspace/workspace.tsx",
-        fn: "response.status === 409",
+        fn: "saveWorkspace()의 catch → setHasConflict()",
         detail:
-          "충돌 안내만 표시하고 저장 기준이나 편집 문서를 바꾸지 않는다. 자동 덮어쓰기와 자동 병합은 하지 않는다.",
+          "409 응답이면 충돌 상태와 오류를 표시하고 저장 버튼을 비활성화한다. 현재 편집은 화면에만 유지하며, 최신 서버 버전으로 바꿔 강제 저장하거나 자동 병합하지 않는다.",
       },
     ],
     snippets: [
@@ -174,95 +179,44 @@ const workflows: Workflow[] = [
       "낙관적 동시성 제어: 문서를 읽을 때의 버전이 여전히 유효한 경우에만 저장한다. 먼저 조회해서 비교한 후 별도로 저장하는 방식의 틈을 없앴다.",
   },
   {
-    id: "recovery",
-    week: "06",
-    title: "임시 저장과 복구",
-    trigger: "편집 후 0.5초 대기 → 새로고침 → 임시 작업의 복구 버튼",
-    result:
-      "브라우저에 남은 임시본을 현재 화면으로 불러온다. 서버 문서는 자동 변경하지 않고, 복구한 작업은 미저장 상태로 유지한다.",
-    steps: [
-      {
-        layer: "화면",
-        file: "src/features/workspace/workspace.tsx",
-        fn: "useEffect() → persistDraft()",
-        detail:
-          "문서 변경 시 이전 타이머를 취소하고 500ms 뒤 임시 저장한다. 서버 저장 후 추가 편집이 없으면 현재 세션의 임시본만 정리한다.",
-      },
-      {
-        layer: "브라우저 저장소",
-        file: "src/features/workspace/workspace-draft.ts",
-        fn: "writeWorkspaceDraft()",
-        detail:
-          "형식을 검증해 localStorage에 저장한다. 사용자·프로젝트·작업 세션 ID로 두 탭의 임시본을 구분한다.",
-      },
-      {
-        layer: "조회 → 화면",
-        file: "src/features/workspace/workspace-draft.ts",
-        fn: "readWorkspaceDrafts()",
-        detail:
-          "해당 사용자·프로젝트의 유효한 임시본을 최근순으로 반환한다. Workspace가 목록을 표시한다.",
-      },
-      {
-        layer: "화면 복구",
-        file: "src/features/workspace/workspace.tsx",
-        fn: "restoreDraft()",
-        detail:
-          "선택한 임시본을 다시 조회하고 문서와 원래 baseVersion을 적용한다. savedDocument는 변경하지 않는다.",
-      },
-    ],
-    snippets: [
-      {
-        file: "src/features/workspace/workspace.tsx",
-        title: "디바운스로 임시 저장",
-        code: "const timer = window.setTimeout(persistDraft, 500);\n\n// effect 정리 시 이전 타이머 취소\nwindow.clearTimeout(timer);\n\n// persistDraft가 만드는 임시본의 핵심 값\n// draftId, ownerId, projectId,\n// baseVersion: documentVersion,\n// savedAt: Date.now(), document: workspace",
-      },
-      {
-        file: "src/features/workspace/workspace.tsx",
-        title: "복구해도 서버 저장 기준은 유지",
-        code: "clearGesture();\nsetWorkspace(draft.document);\nsetDocumentVersion(draft.baseVersion);\nsetSelectedNodeId(null);\n\n// savedDocument는 변경하지 않는다.\n// 오래된 임시본도 저장 시 버전 충돌 검사를 받는다.",
-      },
-    ],
-    point:
-      "localStorage는 서버 자동 저장이 아니라 같은 브라우저·사이트 주소의 보조 복구 수단이다. 복구 원본은 자동 삭제하지 않고 목록에서 직접 정리한다.",
-  },
-  {
     id: "leave",
     week: "06",
-    title: "미저장 상태 새로고침, 탭 닫기",
-    trigger: "저장하지 않은 채 새로고침·탭 닫기 / 프로젝트 목록으로 이동",
+    title: "미저장 이탈 경고",
+    trigger: "저장하지 않은 상태에서 새로고침·탭 닫기 / 프로젝트 목록으로 이동",
     result:
-      "이탈을 확인하고 임시 저장을 시도한다. 이동 취소 시 작업 공간에 그대로 남는다.",
+      "미저장 내용이 있으면 이동 전에 확인한다. 저장한 뒤 추가 편집이 없는 문서는 경고 없이 이동할 수 있다.",
     steps: [
       {
         layer: "상태 판단",
         file: "src/features/workspace/workspace.tsx",
-        fn: "hasUnsavedChanges",
-        detail: "현재 문서와 저장 기준 문서의 참조가 다른지 확인한다.",
+        fn: "hasUnsavedChanges · workspace !== savedDocument",
+        detail:
+          "현재 편집 문서와 서버 저장에 성공한 문서를 비교한다. 저장 실패나 요청 중 추가 편집은 미저장 상태로 남는다.",
       },
       {
         layer: "브라우저 이탈",
         file: "src/features/workspace/workspace.tsx",
-        fn: "handleBeforeUnload()",
+        fn: "useEffect() → handleBeforeUnload()",
         detail:
-          "미저장 상태에서 브라우저의 이탈 경고를 요청한다. 별도 임시 저장 effect는 beforeunload·pagehide·화면 숨김에 저장을 시도한다.",
+          "미저장 상태일 때 beforeunload 리스너를 등록한다. 새로고침·탭 닫기에 브라우저 경고를 요청하며, 상태가 바뀌거나 화면이 종료되면 리스너를 해제한다.",
       },
       {
         layer: "앱 내부 이동",
         file: "src/features/workspace/workspace.tsx",
-        fn: "Link.onNavigate",
+        fn: "Link.onNavigate → window.confirm()",
         detail:
-          "프로젝트 목록 링크는 확인창으로 제어한다. 취소하면 preventDefault(), 이동을 허용하면 persistDraft()를 호출한다.",
+          "프로젝트 목록 링크는 별도 확인창으로 제어한다. 취소하면 event.preventDefault()로 이동을 막고, 허용하면 저장하지 않은 채 이동한다.",
       },
     ],
     snippets: [
       {
         file: "src/features/workspace/workspace.tsx",
-        title: "브라우저 이탈 경고",
-        code: 'function handleBeforeUnload(event: BeforeUnloadEvent) {\n  event.preventDefault();\n  event.returnValue = true;\n}\n\nwindow.addEventListener("beforeunload", handleBeforeUnload);\n// effect 정리에서는 removeEventListener 호출',
+        title: "미저장 상태에서만 브라우저 이탈 경고 등록",
+        code: 'useEffect(() => {\n  if (!hasUnsavedChanges) return;\n\n  function handleBeforeUnload(event: BeforeUnloadEvent) {\n    event.preventDefault();\n    event.returnValue = true;\n  }\n\n  window.addEventListener("beforeunload", handleBeforeUnload);\n  return () => {\n    window.removeEventListener("beforeunload", handleBeforeUnload);\n  };\n}, [hasUnsavedChanges]);',
       },
     ],
     point:
-      "브라우저 이탈과 앱 내부 링크 이동은 서로 다른 이벤트라 따로 처리한다. 강제 종료 직전의 저장이나 모든 내부 이동 경로까지 보장하는 기능은 아니다.",
+      "이탈 경고는 문서를 대신 저장하는 기능이 아니다. 이동을 허용하거나 브라우저를 강제 종료하면 저장하지 않은 작업을 잃을 수 있다.",
   },
   {
     id: "rename",
@@ -321,8 +275,7 @@ const workflows: Workflow[] = [
     week: "06",
     title: "프로젝트 삭제",
     trigger: "제목 오른쪽 휴지통 클릭 → 삭제 확인",
-    result:
-      "프로젝트와 그 안의 서버 문서가 영구 삭제되고 카드가 사라진다. 서버 삭제 성공이 확인되면 현재 브라우저의 해당 임시본을 정리한다.",
+    result: "프로젝트와 그 안의 서버 문서가 영구 삭제되고 카드가 사라진다.",
     steps: [
       {
         layer: "화면",
@@ -339,13 +292,6 @@ const workflows: Workflow[] = [
           "ID와 세션 소유자 조건으로 프로젝트를 삭제한다. ID가 유일하므로 최대 한 프로젝트만 대상이다.",
       },
       {
-        layer: "브라우저 정리",
-        file: "src/features/projects/delete-project-form.tsx",
-        fn: "result.success → removeProjectDrafts()",
-        detail:
-          "서버 실패나 불확실한 응답에서는 임시본을 유지한다. 성공 후에만 해당 사용자·프로젝트의 키를 정리한다.",
-      },
-      {
         layer: "화면 갱신",
         file: "src/features/projects/actions.ts",
         fn: "revalidatePath()",
@@ -359,14 +305,9 @@ const workflows: Workflow[] = [
         title: "소유권 조건을 포함한 삭제",
         code: "const deleted = await prisma.project.deleteMany({\n  where: {\n    id: idResult.data,\n    ownerId: session.user.id,\n  },\n});",
       },
-      {
-        file: "src/features/projects/delete-project-form.tsx",
-        title: "서버 성공 후에만 로컬 임시본 정리",
-        code: "result = await deleteProject(previous, formData);\n\nif (!result.success) return result;\n\nremoveProjectDrafts(ownerId, projectId);",
-      },
     ],
     point:
-      "휴지통 복구는 없는 영구 삭제다. 다른 프로젝트의 임시본은 건드리지 않으며 다른 기기의 임시본까지 삭제하지는 않는다.",
+      "휴지통 기능은 없는 영구 삭제다. 소유권 조건으로 지정한 프로젝트만 삭제하며 다른 프로젝트와 사용자 계정은 삭제 대상이 아니다.",
   },
 ];
 
@@ -421,7 +362,7 @@ export default function Week6Page() {
                 06 / 저장 안정성과 프로젝트 관리
               </p>
               <p className="mt-2 text-sm leading-7 text-neutral-300">
-                저장 상태 → 버전 충돌 → 임시 저장·복구 → 이름 변경·삭제
+                저장 상태 → 버전 충돌 → 미저장 이탈 경고 → 이름 변경·삭제
               </p>
             </div>
           </div>
@@ -442,9 +383,8 @@ export default function Week6Page() {
               {
                 [
                   "로그인·조회",
-                  "저장",
+                  "문서 저장",
                   "저장 충돌",
-                  "임시본·복구",
                   "이탈 보호",
                   "이름 변경",
                   "삭제",
@@ -511,6 +451,70 @@ export default function Week6Page() {
                 ))}
               </div>
             </div>
+            {flow.id === "save" && (
+              <div className="mt-8 overflow-x-auto rounded-xl border border-neutral-700">
+                <table className="w-full min-w-[640px] text-left text-sm">
+                  <caption className="px-5 py-3 text-left text-neutral-300">
+                    저장 결과에 따라 실행되는 코드
+                  </caption>
+                  <thead className="border-y border-neutral-800 bg-neutral-900">
+                    <tr>
+                      {["상황", "실행 코드", "처리 결과"].map((label) => (
+                        <th
+                          key={label}
+                          scope="col"
+                          className="px-5 py-3 font-medium text-neutral-400"
+                        >
+                          {label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      [
+                        "저장 성공",
+                        "setSavedDocument(documentToSave)",
+                        "성공한 요청의 문서와 버전을 저장 기준으로 반영",
+                      ],
+                      [
+                        "연결 실패",
+                        "catch → setSaveError()",
+                        "편집은 현재 화면에만 유지 · 새로고침하면 미저장 내용 유실 가능",
+                      ],
+                      [
+                        "버전 충돌 · 409",
+                        "setHasConflict(true)",
+                        "저장 버튼을 막고 최신 서버 문서의 덮어쓰기 방지",
+                      ],
+                      [
+                        "저장 응답 유실 후 재시도",
+                        "saveWorkspace() → loadWorkspaceDocument()",
+                        "GET으로 문서·버전을 확인한 뒤 안전하게 다음 저장 진행",
+                      ],
+                    ].map(([situation, code, result]) => (
+                      <tr
+                        key={situation}
+                        className="border-t border-neutral-800"
+                      >
+                        <th
+                          scope="row"
+                          className="px-5 py-4 font-medium text-neutral-200"
+                        >
+                          {situation}
+                        </th>
+                        <td className="px-5 py-4 font-mono text-xs text-violet-200">
+                          {code}
+                        </td>
+                        <td className="px-5 py-4 leading-6 text-neutral-300">
+                          {result}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
             {flow.id === "conflict" && (
               <div className="mt-8 overflow-x-auto rounded-xl border border-neutral-700">
                 <table className="w-full min-w-[500px] text-left text-sm">
@@ -547,24 +551,6 @@ export default function Week6Page() {
                 </table>
               </div>
             )}
-            <div className="mt-8 grid gap-4 rounded-xl border border-neutral-800 bg-neutral-900/50 p-5 sm:grid-cols-2">
-              <div>
-                <p className="text-xs font-medium text-violet-300">
-                  화면과 데이터의 결과
-                </p>
-                <p className="mt-2 text-sm leading-7 text-neutral-200">
-                  {flow.result}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-medium text-neutral-400">
-                  처리의 핵심
-                </p>
-                <p className="mt-2 text-sm leading-7 text-neutral-300">
-                  {flow.point}
-                </p>
-              </div>
-            </div>
             {flow.id === "save" && (
               <figure className="mt-8">
                 <figcaption className="mb-4 text-xl font-medium">
