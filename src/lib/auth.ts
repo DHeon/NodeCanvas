@@ -11,7 +11,7 @@ if (!secret || !baseURL) {
   throw new Error("Better Auth environment variables are not set");
 }
 
-export const auth = betterAuth({
+export const auth = betterAuth({  // auth 설정
   appName: "Nono",
   secret,
   baseURL,

@@ -1,0 +1,660 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+
+export const metadata: Metadata = {
+  title: "Nono | 5·6주차 기능과 실행 흐름",
+  description:
+    "사용자 동작에서 서버 처리와 데이터 저장까지 이어지는 Nono의 실행 흐름",
+};
+
+type Step = { layer: string; file: string; fn: string; detail: string };
+type Snippet = { file: string; title: string; code: string };
+type Workflow = {
+  id: string;
+  week: string;
+  title: string;
+  trigger: string;
+  result: string;
+  steps: Step[];
+  snippets: Snippet[];
+  point: string;
+};
+
+const workflows: Workflow[] = [
+  {
+    id: "access",
+    week: "05",
+    title: "로그인하면 내 프로젝트만 보인다",
+    trigger: "이메일·비밀번호 입력 → 로그인 → 대시보드 진입",
+    result:
+      "인증된 사용자의 프로젝트만 카드로 표시된다. 비로그인 상태에서는 로그인 페이지로 이동한다.",
+    steps: [
+      {
+        layer: "화면",
+        file: "src/features/auth/login-form.tsx",
+        fn: "handleSubmit()",
+        detail:
+          "입력값을 검증하고 authClient.signIn.email()로 로그인 요청을 보낸다.",
+      },
+      {
+        layer: "인증 서버",
+        file: "src/app/api/auth/[...all]/route.ts",
+        fn: "toNextJsHandler(auth)",
+        detail:
+          "Better Auth에 인증 요청을 전달한다. 로그인에 성공하면 세션이 생성된다.",
+      },
+      {
+        layer: "서버",
+        file: "src/lib/session.ts",
+        fn: "requireSession() → getSession()",
+        detail:
+          "요청 헤더를 전달해 세션을 조회한다. 세션이 없으면 로그인 페이지로 이동시킨다.",
+      },
+      {
+        layer: "DB → 화면",
+        file: "src/app/(app)/dashboard/page.tsx",
+        fn: "DashboardPage() → prisma.project.findMany()",
+        detail:
+          "세션의 user.id를 ownerId 조건으로 사용하고, 조회 결과를 카드로 렌더링한다.",
+      },
+    ],
+    snippets: [
+      {
+        file: "src/features/auth/login-form.tsx",
+        title: "입력 검증 후 인증 요청",
+        code: 'const result = loginSchema.safeParse({\n  email: formData.get("email"),\n  password: formData.get("password"),\n});\n\nconst { error } = await authClient.signIn.email(result.data);',
+      },
+      {
+        file: "src/app/(app)/dashboard/page.tsx",
+        title: "사용자별 조회의 핵심 조건",
+        code: 'const session = await requireSession();\n\nconst projects = await prisma.project.findMany({\n  where: { ownerId: session.user.id },\n  orderBy: { updatedAt: "desc" },\n  select: { id: true, title: true },\n});',
+      },
+    ],
+    point:
+      "사용자 ID를 브라우저 입력값으로 결정하지 않는다. 서버에서 확인한 세션이 조회와 수정의 기준이다.",
+  },
+  {
+    id: "open",
+    week: "05",
+    title: "프로젝트를 만들고 저장된 작업 공간을 연다",
+    trigger: "프로젝트 이름 입력 → 만들기 / 기존 프로젝트 카드 클릭",
+    result:
+      "프로젝트 생성 후 작업 공간으로 이동한다. 기존 프로젝트를 다시 열면 DB 문서로 편집 화면이 초기화된다.",
+    steps: [
+      {
+        layer: "화면",
+        file: "src/features/projects/create-project-form.tsx",
+        fn: "useActionState(createProject)",
+        detail:
+          "이름을 FormData로 서버 액션에 전달하고 생성 중 상태와 오류를 표시한다.",
+      },
+      {
+        layer: "서버 → DB",
+        file: "src/features/projects/actions.ts",
+        fn: "createProject()",
+        detail:
+          "이름을 검증하고 세션에서 ownerId를 결정해 프로젝트를 생성한다. 생성된 ID의 경로로 이동한다.",
+      },
+      {
+        layer: "서버",
+        file: "src/app/(app)/projects/[projectId]/page.tsx",
+        fn: "ProjectPage() → prisma.project.findFirst()",
+        detail:
+          "URL의 프로젝트 ID와 세션 사용자 ID로 조회한다. 없거나 다른 사용자의 프로젝트면 404로 처리한다.",
+      },
+      {
+        layer: "화면",
+        file: "src/app/(app)/projects/[projectId]/page.tsx",
+        fn: "workspaceDocumentSchema → <Workspace />",
+        detail:
+          "document가 null이면 빈 문서를 생성한다. 문서·버전·사용자 ID를 Workspace에 전달한다.",
+      },
+    ],
+    snippets: [
+      {
+        file: "src/features/projects/actions.ts",
+        title: "서버에서 소유자를 결정하고 생성",
+        code: 'const session = await requireSession();\n\nproject = await prisma.project.create({\n  data: {\n    title: result.data,\n    ownerId: session.user.id,\n  },\n  select: { id: true },\n});\n\nredirect("/projects/" + project.id);',
+      },
+      {
+        file: "src/app/(app)/projects/[projectId]/page.tsx",
+        title: "DB 문서를 화면의 초기값으로 전달",
+        code: "const result = workspaceDocumentSchema.safeParse(\n  project.document === null\n    ? createWorkspace()\n    : project.document,\n);\n\n<Workspace\n  initialDocument={result.data}\n  initialVersion={project.documentVersion}\n  ownerId={session.user.id}\n  // 프로젝트 ID와 제목도 함께 전달\n/>",
+      },
+    ],
+    point:
+      "최초 불러오기는 서버 페이지가 직접 DB를 조회한다. GET 문서 API를 다시 호출하는 경로는 아니다. null 문서와 존재하지 않는 프로젝트도 구분한다.",
+  },
+  {
+    id: "save",
+    week: "05 → 06",
+    title: "저장을 누르면 문서와 버전이 함께 저장된다",
+    trigger: "노드 내용·위치 수정 → 저장 버튼 클릭",
+    result:
+      "성공 응답을 확인한 문서만 저장 기준으로 반영한다. 저장 도중 추가로 수정한 내용은 미저장 상태로 남는다.",
+    steps: [
+      {
+        layer: "화면",
+        file: "src/features/workspace/workspace.tsx",
+        fn: "onClick → saveWorkspace()",
+        detail:
+          "중복 요청과 드래그 중 저장을 막고, 버튼을 누른 순간의 문서와 버전을 기억한다.",
+      },
+      {
+        layer: "요청",
+        file: "src/features/workspace/workspace.tsx",
+        fn: "fetch() · PUT /api/projects/[projectId]/document",
+        detail:
+          "document와 expectedVersion을 JSON으로 전송한다. 저장 중에도 편집한 문서는 따로 유지한다.",
+      },
+      {
+        layer: "서버 → DB",
+        file: "src/app/api/projects/[projectId]/document/route.ts",
+        fn: "PUT() → saveDocumentSchema → updateMany()",
+        detail:
+          "세션·Origin·JSON·문서 형식을 검증한다. 소유자와 버전이 맞는 프로젝트의 document를 저장한다.",
+      },
+      {
+        layer: "응답 → 화면",
+        file: "src/features/workspace/workspace.tsx",
+        fn: "setDocumentVersion() · setSavedDocument()",
+        detail:
+          "응답 버전을 검증하고 요청 당시 문서를 저장 기준으로 설정한다. 실패하면 편집 내용을 초기화하지 않는다.",
+      },
+    ],
+    snippets: [
+      {
+        file: "src/features/workspace/workspace.tsx",
+        title: "저장 요청 당시의 문서를 기억",
+        code: "const documentToSave = workspace;\nconst versionToSave = documentVersion;\n\n// PUT 요청 body\nJSON.stringify({\n  document: documentToSave,\n  expectedVersion: versionToSave,\n});\n\n// 성공 응답 검증 후\nsetDocumentVersion(result.data.documentVersion);\nsetSavedDocument(documentToSave);",
+      },
+      {
+        file: "src/features/workspace/workspace.tsx",
+        title: "추가 편집을 저장 완료로 오인하지 않기",
+        code: "const hasUnsavedChanges = workspace !== savedDocument;\n\n// 저장 중 편집하면 workspace는 새 객체가 된다.\n// savedDocument는 요청 당시 documentToSave를 가리킨다.\n// 따라서 추가 편집은 계속 미저장 상태다.",
+      },
+    ],
+    point:
+      "5주차에는 문서 저장·불러오기를 연결했고, 6주차에는 중복 요청·실패·저장 중 추가 편집을 구분하도록 안정화했다. 카메라와 선택 상태는 문서 저장 대상이 아니다.",
+  },
+  {
+    id: "conflict",
+    week: "06",
+    title: "다른 탭이 먼저 저장하면 덮어쓰기를 막는다",
+    trigger: "같은 버전을 연 두 탭 → A 저장 → B 저장",
+    result:
+      "A는 저장에 성공하고 버전이 증가한다. 이전 버전으로 저장한 B는 409 응답을 받고, 편집 내용은 화면에 유지된다.",
+    steps: [
+      {
+        layer: "DB 구조",
+        file: "prisma/schema.prisma",
+        fn: "Project.documentVersion",
+        detail:
+          "기본값 0인 정수 컬럼으로 문서 저장 버전을 관리한다. 새 테이블이 아니라 기존 project 테이블의 확장이다.",
+      },
+      {
+        layer: "서버 → DB",
+        file: "src/app/api/projects/[projectId]/document/route.ts",
+        fn: "updateMany()의 where와 increment",
+        detail:
+          "버전 비교, 문서 저장, 버전 증가를 하나의 DB 업데이트로 처리한다.",
+      },
+      {
+        layer: "서버 응답",
+        file: "src/app/api/projects/[projectId]/document/route.ts",
+        fn: "saved.count === 0",
+        detail:
+          "소유한 프로젝트가 없으면 404, 프로젝트는 있지만 버전이 달라졌다면 409를 반환한다.",
+      },
+      {
+        layer: "화면",
+        file: "src/features/workspace/workspace.tsx",
+        fn: "response.status === 409",
+        detail:
+          "충돌 안내만 표시하고 저장 기준이나 편집 문서를 바꾸지 않는다. 자동 덮어쓰기와 자동 병합은 하지 않는다.",
+      },
+    ],
+    snippets: [
+      {
+        file: "src/app/api/projects/[projectId]/document/route.ts",
+        title: "버전 확인과 저장을 하나의 업데이트로",
+        code: "const saved = await prisma.project.updateMany({\n  where: {\n    id: idResult.data,\n    ownerId: session.user.id,\n    documentVersion: expectedVersion,\n  },\n  data: {\n    document,\n    documentVersion: { increment: 1 },\n  },\n});",
+      },
+    ],
+    point:
+      "낙관적 동시성 제어: 문서를 읽을 때의 버전이 여전히 유효한 경우에만 저장한다. 먼저 조회해서 비교한 후 별도로 저장하는 방식의 틈을 없앴다.",
+  },
+  {
+    id: "recovery",
+    week: "06",
+    title: "편집 내용은 임시 보관하고 다시 선택해 복구한다",
+    trigger: "편집 후 0.5초 대기 → 새로고침 → 임시 작업의 복구 버튼",
+    result:
+      "브라우저에 남은 임시본을 현재 화면으로 불러온다. 서버 문서는 자동 변경하지 않고, 복구한 작업은 미저장 상태로 유지한다.",
+    steps: [
+      {
+        layer: "화면",
+        file: "src/features/workspace/workspace.tsx",
+        fn: "useEffect() → persistDraft()",
+        detail:
+          "문서 변경 시 이전 타이머를 취소하고 500ms 뒤 임시 저장한다. 서버 저장 후 추가 편집이 없으면 현재 세션의 임시본만 정리한다.",
+      },
+      {
+        layer: "브라우저 저장소",
+        file: "src/features/workspace/workspace-draft.ts",
+        fn: "writeWorkspaceDraft()",
+        detail:
+          "형식을 검증해 localStorage에 저장한다. 사용자·프로젝트·작업 세션 ID로 두 탭의 임시본을 구분한다.",
+      },
+      {
+        layer: "조회 → 화면",
+        file: "src/features/workspace/workspace-draft.ts",
+        fn: "readWorkspaceDrafts()",
+        detail:
+          "해당 사용자·프로젝트의 유효한 임시본을 최근순으로 반환한다. Workspace가 목록을 표시한다.",
+      },
+      {
+        layer: "화면 복구",
+        file: "src/features/workspace/workspace.tsx",
+        fn: "restoreDraft()",
+        detail:
+          "선택한 임시본을 다시 조회하고 문서와 원래 baseVersion을 적용한다. savedDocument는 변경하지 않는다.",
+      },
+    ],
+    snippets: [
+      {
+        file: "src/features/workspace/workspace.tsx",
+        title: "디바운스로 임시 저장",
+        code: "const timer = window.setTimeout(persistDraft, 500);\n\n// effect 정리 시 이전 타이머 취소\nwindow.clearTimeout(timer);\n\n// persistDraft가 만드는 임시본의 핵심 값\n// draftId, ownerId, projectId,\n// baseVersion: documentVersion,\n// savedAt: Date.now(), document: workspace",
+      },
+      {
+        file: "src/features/workspace/workspace.tsx",
+        title: "복구해도 서버 저장 기준은 유지",
+        code: "clearGesture();\nsetWorkspace(draft.document);\nsetDocumentVersion(draft.baseVersion);\nsetSelectedNodeId(null);\n\n// savedDocument는 변경하지 않는다.\n// 오래된 임시본도 저장 시 버전 충돌 검사를 받는다.",
+      },
+    ],
+    point:
+      "localStorage는 서버 자동 저장이 아니라 같은 브라우저·사이트 주소의 보조 복구 수단이다. 복구 원본은 자동 삭제하지 않고 목록에서 직접 정리한다.",
+  },
+  {
+    id: "leave",
+    week: "06",
+    title: "미저장 상태로 나가면 확인하고 마지막 임시본을 남긴다",
+    trigger: "저장하지 않은 채 새로고침·탭 닫기 / 프로젝트 목록으로 이동",
+    result:
+      "이탈을 확인하고 임시 저장을 시도한다. 이동 취소 시 작업 공간에 그대로 남는다.",
+    steps: [
+      {
+        layer: "상태 판단",
+        file: "src/features/workspace/workspace.tsx",
+        fn: "hasUnsavedChanges",
+        detail: "현재 문서와 저장 기준 문서의 참조가 다른지 확인한다.",
+      },
+      {
+        layer: "브라우저 이탈",
+        file: "src/features/workspace/workspace.tsx",
+        fn: "handleBeforeUnload()",
+        detail:
+          "미저장 상태에서 브라우저의 이탈 경고를 요청한다. 별도 임시 저장 effect는 beforeunload·pagehide·화면 숨김에 저장을 시도한다.",
+      },
+      {
+        layer: "앱 내부 이동",
+        file: "src/features/workspace/workspace.tsx",
+        fn: "Link.onNavigate",
+        detail:
+          "프로젝트 목록 링크는 확인창으로 제어한다. 취소하면 preventDefault(), 이동을 허용하면 persistDraft()를 호출한다.",
+      },
+    ],
+    snippets: [
+      {
+        file: "src/features/workspace/workspace.tsx",
+        title: "브라우저 이탈 경고",
+        code: 'function handleBeforeUnload(event: BeforeUnloadEvent) {\n  event.preventDefault();\n  event.returnValue = true;\n}\n\nwindow.addEventListener("beforeunload", handleBeforeUnload);\n// effect 정리에서는 removeEventListener 호출',
+      },
+    ],
+    point:
+      "브라우저 이탈과 앱 내부 링크 이동은 서로 다른 이벤트라 따로 처리한다. 강제 종료 직전의 저장이나 모든 내부 이동 경로까지 보장하는 기능은 아니다.",
+  },
+  {
+    id: "rename",
+    week: "06",
+    title: "제목 옆 연필로 수정하고 Enter·바깥 클릭으로 저장한다",
+    trigger: "연필 클릭 → 제목 입력 → Enter 또는 바깥 클릭",
+    result:
+      "새 이름이 DB와 카드에 반영된다. Esc는 취소, 실패는 입력값 유지, 한글 조합 확정용 Enter는 저장하지 않는다.",
+    steps: [
+      {
+        layer: "화면",
+        file: "src/features/projects/rename-project-form.tsx",
+        fn: "startEditing() → useEffect()",
+        detail:
+          "editing을 true로 바꿔 입력창을 표시한다. DOM 생성 후 focus()와 select()를 실행한다.",
+      },
+      {
+        layer: "이벤트",
+        file: "src/features/projects/rename-project-form.tsx",
+        fn: "onBlur / onKeyDown → saveTitle()",
+        detail:
+          "공백·빈 이름·변경 없는 이름을 확인한다. savingRef로 Enter와 blur의 중복 요청을 막고 FormData를 만든다.",
+      },
+      {
+        layer: "서버 → DB",
+        file: "src/features/projects/actions.ts",
+        fn: "renameProject() → updateMany()",
+        detail:
+          "로그인, ID, 이름을 검증하고 소유자가 일치하는 프로젝트의 title만 수정한다.",
+      },
+      {
+        layer: "화면 갱신",
+        file: "src/features/projects/actions.ts",
+        fn: "revalidatePath()",
+        detail:
+          "대시보드와 프로젝트 경로의 데이터를 갱신한다. 이름 변경은 documentVersion을 증가시키지 않는다.",
+      },
+    ],
+    snippets: [
+      {
+        file: "src/features/projects/rename-project-form.tsx",
+        title: "화면 함수에서 서버 액션으로 전달",
+        code: 'formData.set("projectId", projectId);\nformData.set("title", nextTitle);\n\nconst result = await renameProject(\n  { error: "", message: "" },\n  formData,\n);',
+      },
+      {
+        file: "src/features/projects/actions.ts",
+        title: "실제 DB 제목 변경 지점",
+        code: 'const updated = await prisma.project.updateMany({\n  where: {\n    id: idResult.data,\n    ownerId: session.user.id,\n  },\n  data: { title: titleResult.data },\n});\n\nrevalidatePath("/dashboard");',
+      },
+    ],
+    point:
+      "saveTitle()은 브라우저에서 요청을 준비하는 함수다. 실제 DB 수정은 서버의 renameProject()에서 실행된다.",
+  },
+  {
+    id: "delete",
+    week: "06",
+    title: "휴지통으로 확인 후 삭제하고 임시본도 정리한다",
+    trigger: "제목 오른쪽 휴지통 클릭 → 삭제 확인",
+    result:
+      "프로젝트와 그 안의 서버 문서가 영구 삭제되고 카드가 사라진다. 서버 삭제 성공이 확인되면 현재 브라우저의 해당 임시본을 정리한다.",
+    steps: [
+      {
+        layer: "화면",
+        file: "src/features/projects/delete-project-form.tsx",
+        fn: "onSubmit → window.confirm()",
+        detail:
+          "취소하면 요청하지 않는다. useActionState가 요청 중 상태를 관리하고 버튼을 비활성화한다.",
+      },
+      {
+        layer: "서버 → DB",
+        file: "src/features/projects/actions.ts",
+        fn: "deleteProject() → deleteMany()",
+        detail:
+          "ID와 세션 소유자 조건으로 프로젝트를 삭제한다. ID가 유일하므로 최대 한 프로젝트만 대상이다.",
+      },
+      {
+        layer: "브라우저 정리",
+        file: "src/features/projects/delete-project-form.tsx",
+        fn: "result.success → removeProjectDrafts()",
+        detail:
+          "서버 실패나 불확실한 응답에서는 임시본을 유지한다. 성공 후에만 해당 사용자·프로젝트의 키를 정리한다.",
+      },
+      {
+        layer: "화면 갱신",
+        file: "src/features/projects/actions.ts",
+        fn: "revalidatePath()",
+        detail:
+          "대시보드 조회 결과가 갱신되어 삭제된 카드가 사라진다. 이미 열린 다른 작업 탭을 강제로 닫지는 않는다.",
+      },
+    ],
+    snippets: [
+      {
+        file: "src/features/projects/actions.ts",
+        title: "소유권 조건을 포함한 삭제",
+        code: "const deleted = await prisma.project.deleteMany({\n  where: {\n    id: idResult.data,\n    ownerId: session.user.id,\n  },\n});",
+      },
+      {
+        file: "src/features/projects/delete-project-form.tsx",
+        title: "서버 성공 후에만 로컬 임시본 정리",
+        code: "result = await deleteProject(previous, formData);\n\nif (!result.success) return result;\n\nremoveProjectDrafts(ownerId, projectId);",
+      },
+    ],
+    point:
+      "휴지통 복구는 없는 영구 삭제다. 다른 프로젝트의 임시본은 건드리지 않으며 다른 기기의 임시본까지 삭제하지는 않는다.",
+  },
+];
+
+function Code({ snippet }: { snippet: Snippet }) {
+  return (
+    <figure className="min-w-0 overflow-hidden rounded-xl border border-neutral-800 bg-neutral-950">
+      <figcaption className="border-b border-neutral-800 px-5 py-3">
+        <p className="text-sm font-medium text-neutral-200">{snippet.title}</p>
+        <p className="mt-1 font-mono text-xs leading-5 break-all text-violet-300">
+          {snippet.file}
+        </p>
+        <p className="mt-1 text-xs text-neutral-500">
+          핵심 발췌 · 검증 및 오류 분기 일부 생략
+        </p>
+      </figcaption>
+      <pre
+        tabIndex={0}
+        aria-label={snippet.title}
+        className="overflow-x-auto p-5 text-sm leading-7 text-violet-100 focus-visible:outline-2 focus-visible:outline-violet-400"
+      >
+        <code>{snippet.code}</code>
+      </pre>
+    </figure>
+  );
+}
+
+export default function Week6Page() {
+  return (
+    <main
+      id="top"
+      className="min-h-screen bg-neutral-950 px-5 text-neutral-100 selection:bg-violet-500/40 sm:px-8"
+    >
+      <div className="mx-auto max-w-6xl">
+        <header className="py-16 sm:py-20">
+          <p className="font-mono text-sm tracking-widest text-violet-300">
+            NONO / WEEK 05 + 06
+          </p>
+          <h1 className="mt-6 text-4xl leading-tight font-semibold tracking-tight sm:text-6xl">
+            프로젝트 DB 저장
+          </h1>
+          <div className="mt-10 grid gap-4 sm:grid-cols-2">
+            <div className="rounded-xl border border-neutral-800 p-5">
+              <p className="font-mono text-sm text-violet-300">
+                05 / 사용자와 문서 연결
+              </p>
+              <p className="mt-2 text-sm leading-7 text-neutral-300">
+                로그인 → 사용자별 프로젝트 → 생성·불러오기 → DB 문서 저장
+              </p>
+            </div>
+            <div className="rounded-xl border border-neutral-800 p-5">
+              <p className="font-mono text-sm text-violet-300">
+                06 / 저장 안정성과 프로젝트 관리
+              </p>
+              <p className="mt-2 text-sm leading-7 text-neutral-300">
+                저장 상태 → 버전 충돌 → 임시 저장·복구 → 이름 변경·삭제
+              </p>
+            </div>
+          </div>
+        </header>
+        <nav
+          aria-label="발표 목차"
+          className="sticky top-0 z-10 -mx-5 flex gap-4 overflow-x-auto border-y border-neutral-800 bg-neutral-950/95 px-5 py-4 backdrop-blur sm:-mx-8 sm:px-8"
+        >
+          {workflows.map((flow, index) => (
+            <a
+              key={flow.id}
+              href={"#" + flow.id}
+              className="shrink-0 text-sm text-neutral-400 hover:text-violet-200"
+            >
+              <span className="mr-2 font-mono text-violet-300">
+                {String(index + 1).padStart(2, "0")}
+              </span>
+              {
+                [
+                  "로그인·조회",
+                  "생성·불러오기",
+                  "저장",
+                  "저장 충돌",
+                  "임시본·복구",
+                  "이탈 보호",
+                  "이름 변경",
+                  "삭제",
+                ][index]
+              }
+            </a>
+          ))}
+        </nav>
+
+        {workflows.map((flow, index) => (
+          <section
+            key={flow.id}
+            id={flow.id}
+            aria-labelledby={flow.id + "-title"}
+            className="scroll-mt-24 border-b border-neutral-800 py-14 sm:py-20"
+          >
+            <div className="flex items-center gap-3 font-mono text-sm text-violet-300">
+              <span>{String(index + 1).padStart(2, "0")}</span>
+              <span className="rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-400">
+                WEEK {flow.week}
+              </span>
+            </div>
+            <h2
+              id={flow.id + "-title"}
+              className="mt-4 text-3xl leading-tight font-semibold tracking-tight sm:text-4xl"
+            >
+              {flow.title}
+            </h2>
+            <div className="mt-6 rounded-xl border border-violet-400/30 bg-violet-400/5 px-5 py-4">
+              <p className="text-xs font-medium text-violet-300">사용자 동작</p>
+              <p className="mt-2 text-lg leading-7">{flow.trigger}</p>
+            </div>
+            <div className="mt-8 grid items-start gap-8 lg:grid-cols-[1fr_1.1fr]">
+              <div>
+                <h3 className="text-sm font-medium text-neutral-400">
+                  실행 순서 · 화면 → 처리 → 데이터
+                </h3>
+                <ol className="mt-5 space-y-5">
+                  {flow.steps.map((step, stepIndex) => (
+                    <li
+                      key={step.fn}
+                      className="relative border-l border-neutral-700 pl-6"
+                    >
+                      <span className="absolute top-0 -left-3 flex h-6 w-6 items-center justify-center rounded-full border border-neutral-700 bg-neutral-950 font-mono text-xs text-violet-300">
+                        {stepIndex + 1}
+                      </span>
+                      <p className="text-xs text-violet-300">{step.layer}</p>
+                      <h4 className="mt-1 font-mono text-sm font-medium break-words text-neutral-100">
+                        {step.fn}
+                      </h4>
+                      <p className="mt-1 font-mono text-xs leading-5 break-all text-neutral-500">
+                        {step.file}
+                      </p>
+                      <p className="mt-2 text-sm leading-7 text-neutral-300">
+                        {step.detail}
+                      </p>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+              <div className="min-w-0 space-y-4">
+                {flow.snippets.map((snippet) => (
+                  <Code key={snippet.title} snippet={snippet} />
+                ))}
+              </div>
+            </div>
+            {flow.id === "conflict" && (
+              <div className="mt-8 overflow-x-auto rounded-xl border border-neutral-700">
+                <table className="w-full min-w-[500px] text-left text-sm">
+                  <caption className="px-5 py-3 text-left text-neutral-300">
+                    두 탭이 버전 0을 읽은 경우
+                  </caption>
+                  <thead className="border-y border-neutral-800 bg-neutral-900">
+                    <tr>
+                      {["동작", "요청 버전", "DB 버전", "결과"].map((label) => (
+                        <th
+                          key={label}
+                          scope="col"
+                          className="px-5 py-3 font-medium text-neutral-400"
+                        >
+                          {label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      ["A 저장", "0", "0 → 1", "저장 성공"],
+                      ["B 저장", "0", "1 유지", "409 · 덮어쓰기 방지"],
+                    ].map((row) => (
+                      <tr key={row[0]} className="border-t border-neutral-800">
+                        {row.map((cell, i) => (
+                          <td key={i} className="px-5 py-4 text-neutral-200">
+                            {cell}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div className="mt-8 grid gap-4 rounded-xl border border-neutral-800 bg-neutral-900/50 p-5 sm:grid-cols-2">
+              <div>
+                <p className="text-xs font-medium text-violet-300">
+                  화면과 데이터의 결과
+                </p>
+                <p className="mt-2 text-sm leading-7 text-neutral-200">
+                  {flow.result}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-neutral-400">
+                  처리의 핵심
+                </p>
+                <p className="mt-2 text-sm leading-7 text-neutral-300">
+                  {flow.point}
+                </p>
+              </div>
+            </div>
+          </section>
+        ))}
+        <section aria-labelledby="next-title" className="py-14 sm:py-20">
+          <p className="font-mono text-sm text-violet-300">NEXT / WEEK 07</p>
+          <h2 id="next-title" className="mt-3 text-3xl font-semibold">
+            다음 주 계획
+          </h2>
+          <div className="mt-6 grid gap-4 sm:grid-cols-3">
+            {[
+              [
+                "노드 크기 조절",
+                "조절 손잡이의 입력을 문서의 width·height 변경으로 연결",
+              ],
+              ["다중 선택", "여러 노드의 선택 상태와 함께 이동하는 조작 구현"],
+              [
+                "실행 취소·다시 실행",
+                "문서 변경 이력을 관리해 이전 작업 상태로 복원",
+              ],
+            ].map(([title, detail]) => (
+              <article
+                key={title}
+                className="rounded-xl border border-neutral-800 p-5"
+              >
+                <h3 className="font-medium">{title}</h3>
+                <p className="mt-2 text-sm leading-7 text-neutral-400">
+                  {detail}
+                </p>
+              </article>
+            ))}
+          </div>
+        </section>
+        <footer className="flex flex-wrap justify-between gap-4 border-t border-neutral-800 py-8 text-sm text-neutral-500">
+          <p>NONO · 5·6주차 기능과 실행 흐름</p>
+          <a href="#top" className="hover:text-white">
+            맨 위로 ↑
+          </a>
+        </footer>
+      </div>
+    </main>
+  );
+}

@@ -71,7 +71,7 @@ export default function Workspace({
   const [recoveryError, setRecoveryError] = useState("");
 
 
-  const hasUnsavedChanges = workspace !== savedDocument;
+  const hasUnsavedChanges = workspace !== savedDocument;  // 둘이 다른지 비교함. 저장 후 또 수정이 되서 현재 작업 상태와 저장된 작업 상태를 비교
   const persistDraft = useCallback(() => {
     try {
       if (!hasUnsavedChanges) {
@@ -255,7 +255,7 @@ export default function Workspace({
     };
   }, []);
 
-  useEffect(() => { // 새로 고침 할 때 변경 사항이 있으면 진짜 새로고침 할건지 물어보게 하기
+  useEffect(() => { // 새로 고침 할 때 변경 사항이 있으면 진짜 새로고침 할건지 물어보게 하는 이벤트 리스너설정
     if (!hasUnsavedChanges) return;
 
     function handleBeforeUnload(event: BeforeUnloadEvent) {
@@ -494,19 +494,19 @@ export default function Workspace({
 
     setSelectedNodeId(null);
   }
-  async function saveWorkspace() {
-    if (savingRef.current || gestureRef.current) return;
+  async function saveWorkspace() { // 작업공간 저장하기
+    if (savingRef.current || gestureRef.current) return;  //저장 도중이나 드래그 도중에 저장 막음.
 
     savingRef.current = true;
     setIsSaving(true);
     setSaveError("");
 
-    // 저장을 시작한 시점의 문서와 버전
-    const documentToSave = workspace;
-    const versionToSave = documentVersion;
+    // 저장을 시작한 시점의 작업공간과 버전이 저장이 됨
+    const documentToSave = workspace;  
+    const versionToSave = documentVersion;  
 
     try {
-      const response = await fetch(
+      const response = await fetch(  //projectId를 통해 작업공간의 json 데이터를 저장함
         `/api/projects/${projectId}/document`,
         {
           method: "PUT",
@@ -547,8 +547,8 @@ export default function Workspace({
         return;
       }
 
-      setDocumentVersion(result.data.documentVersion);
-      setSavedDocument(documentToSave);
+      setDocumentVersion(result.data.documentVersion);  //
+      setSavedDocument(documentToSave); // 현재 작업 중인 문서와 저장 버튼을 눌렀을 때의 문서는 다름.
     } catch {
       setSaveError(
         "저장 결과를 확인하지 못했습니다. 연결이 끊겼거나 응답을 받지 못했을 수 있습니다. 현재 작업은 유지됩니다.",

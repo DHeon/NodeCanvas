@@ -8,9 +8,9 @@ import DeleteProjectForm from "@/features/projects/delete-project-form";
 import { prisma } from "@/lib/prisma";
 
 export default async function DashboardPage() {
-  const session = await requireSession();
+  const session = await requireSession(); // 세션을 통해 사용자 정보 획득
 
-  const projects = await prisma.project.findMany({
+  const projects = await prisma.project.findMany({  // 사용자 정보를 통해 프로젝트를 가져옴
     where: {
       ownerId: session.user.id,
     },

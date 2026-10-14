@@ -36,7 +36,7 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
     project.document === null
       ? createWorkspace()
       : project.document,
-  );
+  );  // id로 된게 없으면 새로 createWorkspace()를 함.
 
   if (!result.success) {
     throw new Error("저장된 작업 공간 문서의 형식이 올바르지 않습니다.");
@@ -47,7 +47,7 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
       key={project.id}
       projectId={project.id}
       projectTitle={project.title}
-      initialDocument={result.data}
+      initialDocument={result.data}  //저장된 초기 데이터를 넘김
       initialVersion={project.documentVersion}
       ownerId={session.user.id}
     />

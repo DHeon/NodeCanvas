@@ -42,7 +42,7 @@ type RenameProjectState = {
   message: string;
 };
 
-export async function renameProject(
+export async function renameProject(  // 제목 저장시 작동
   _previous: RenameProjectState,
   formData: FormData,
 ): Promise<RenameProjectState> {

@@ -160,7 +160,7 @@ export async function PUT(
       );
     }
 
-    const result = saveDocumentSchema.safeParse(body);
+    const result = saveDocumentSchema.safeParse(body);  //json 데이터 무결성 검사
 
     if (!result.success) {
       return Response.json(
@@ -174,11 +174,11 @@ export async function PUT(
 
     const { document, expectedVersion } = result.data;
 
-    const saved = await prisma.project.updateMany({
+    const saved = await prisma.project.updateMany({  //실제 저장
       where: {
         id: idResult.data,
         ownerId: session.user.id,
-        documentVersion: expectedVersion,
+        documentVersion: expectedVersion,  //현재 문서에서 저장할 시점에서의 버전으로 업데이트를 해달라고함.
       },
       data: {
         document,
@@ -206,7 +206,7 @@ export async function PUT(
         );
       }
 
-      return Response.json(
+      return Response.json(  //프로젝트가 존재는 하면 버전이 달라 저장이 안되는 걸로 처리
         {
           message:
             "다른 화면에서 저장된 변경 사항이 있습니다. 현재 작업은 저장되지 않았습니다.",

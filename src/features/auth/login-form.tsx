@@ -28,7 +28,7 @@ export default function LoginForm({ destination }: { destination: string }) {
     submitting.current = true;
     setIsSubmitting(true);
     try {
-      const { error } = await authClient.signIn.email(result.data);
+      const { error } = await authClient.signIn.email(result.data);  //이메일을 통해 로그인 요청을 보냄
       if (error) {
         setErrorMessage(
           error.status === 429

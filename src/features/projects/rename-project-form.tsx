@@ -16,18 +16,18 @@ export default function RenameProjectForm({
   projectTitle,
   children,
 }: RenameProjectFormProps) {
-  const [editing, setEditing] = useState(false);
-  const [title, setTitle] = useState(projectTitle);
-  const [error, setError] = useState("");
-  const [pending, startTransition] = useTransition();
-  const inputRef = useRef<HTMLInputElement>(null);
-  const editingRef = useRef(false);
-  const savingRef = useRef(false);
-  const composingRef = useRef(false);
-  const blurredDuringCompositionRef = useRef(false);
+  const [editing, setEditing] = useState(false);      //제목 편집창으로 바꿀지 true, false
+  const [title, setTitle] = useState(projectTitle);  //사용자가 입력중인 title
+  const [error, setError] = useState("");           // 빈 이름, 서버 오류 등 
+  const [pending, startTransition] = useTransition(); //저장 처리 중인가
+  const inputRef = useRef<HTMLInputElement>(null);  // 입력창 부분 DOM 
+  const editingRef = useRef(false); // 편집 가능 상태인지 확인
+  const savingRef = useRef(false); // 이미 저장 요청 중인지 확인
+  const composingRef = useRef(false);  // 한글 입력시 조합완료 이벤트와 엔터 이벤트 중복 관련
+  const blurredDuringCompositionRef = useRef(false); //입력 중 다른 곳 클릭 하면 자동 저장
   const errorId = useId();
 
-  useEffect(() => {
+  useEffect(() => {  // 편집 시작시 포커스 
     if (editing) {
       inputRef.current?.focus();
       inputRef.current?.select();
