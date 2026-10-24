@@ -15,15 +15,6 @@ const cardClass = "rounded-2xl border border-neutral-800 bg-neutral-900/60 p-6";
 const linkClass =
   "inline-flex items-center justify-center rounded-lg border border-neutral-600 px-4 py-2.5 text-sm font-medium hover:border-violet-300 hover:text-violet-200 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-400";
 
-const sections = [
-  ["progress", "이번 주 목표"],
-  ["signup", "회원가입"],
-  ["database", "인증 데이터"],
-  ["demo", "작업 공간 데모"],
-  ["structure", "구현 원리"],
-  ["next", "다음 계획"],
-];
-
 const authTables = [
   {
     name: "User",
@@ -54,21 +45,6 @@ const authTables = [
       "이메일 인증과 비밀번호 재설정 등에 사용할 일회성 확인 데이터를 위한 테이블입니다.",
   },
 ];
-
-const verifyQuery = `SELECT
-  u.email,
-  a."providerId",
-  a.password IS NOT NULL AS has_password
-FROM public."user" AS u
-JOIN public.account AS a ON a."userId" = u.id;`;
-
-const cameraCode = `// 캔버스 전체의 표시 위치와 배율
-transform: \`translate(\${camera.x}px, \${camera.y}px)
-            scale(\${camera.zoom})\`
-
-// 확대 배율을 고려한 노드 드래그
-const dx = event.clientX - gesture.startX;
-const nextX = gesture.x + dx / gesture.zoom;`;
 
 export default function Week3Page() {
   return (

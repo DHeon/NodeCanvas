@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createNodeId } from "./create-node-id";
+import { v4 as uuidv4 } from "uuid";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import TextNodeView from "./text-node-view";
 import WorkspaceToolbar from "./workspace-toolbar";
@@ -41,6 +41,15 @@ type Gesture =
       startPointer: Point;
       nodeId: string;
       startPosition: Point;
+      zoom: number;
+    }
+  | {
+      kind: "resize";
+      pointerId: number;
+      startPointer: Point;
+      nodeId: string;
+      startWidth: number;
+      startHeight: number;
       zoom: number;
     };
 
@@ -270,6 +279,36 @@ export default function Workspace({
     setSelectedNodeId(node.id);
   }
 
+  function startNodeResize(
+    event: ReactPointerEvent<HTMLButtonElement>,
+    node: TextNode,
+  ) {
+    const viewport = viewportRef.current;
+
+    if (event.button !== 0 || gestureRef.current || !viewport) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    viewport.focus({ preventScroll: true });
+    viewport.setPointerCapture(event.pointerId);
+
+    gestureRef.current = {
+      kind: "resize",
+      pointerId: event.pointerId,
+      startPointer: {
+        x: event.clientX,
+        y: event.clientY,
+      },
+      nodeId: node.id,
+      startWidth: node.width,
+      startHeight: node.height,
+      zoom: camera.zoom,
+    };
+
+    setSelectedNodeId(node.id);
+  }
+
   function moveGesture(event: ReactPointerEvent<HTMLDivElement>) {
     const gesture = gestureRef.current;
 
@@ -295,6 +334,45 @@ export default function Workspace({
       return;
     }
 
+    if (gesture.kind === "resize") {
+      const nextWidth = gesture.startWidth + deltaX / gesture.zoom;
+      const nextHeight = gesture.startHeight + deltaY / gesture.zoom;
+
+      setWorkspace((current) => {
+        let changed = false;
+
+        const nodes = current.nodes.map((node) => {
+          if (node.id !== gesture.nodeId) return node;
+
+          // 노드의 오른쪽·아래쪽이 캔버스를 넘지 않도록 제한한다.
+          const maxWidth = current.canvas.width - node.position.x;
+          const maxHeight = current.canvas.height - node.position.y;
+
+          // 최소 크기. 남은 캔버스 공간이 더 작으면 그 공간을 우선한다.
+          const minWidth = Math.min(200, maxWidth);
+          const minHeight = Math.min(140, maxHeight);
+
+          const width = Math.max(minWidth, Math.min(nextWidth, maxWidth));
+          const height = Math.max(minHeight, Math.min(nextHeight, maxHeight));
+
+          if (width === node.width && height === node.height) return node;
+
+          changed = true;
+
+          return {
+            ...node,
+            width,
+            height,
+          };
+        });
+
+        return changed ? { ...current, nodes } : current;
+      });
+
+      return;
+    }
+
+    // pan과 resize를 처리한 뒤에는 노드 이동 Gesture만 남는다.
     const nextX = gesture.startPosition.x + deltaX / gesture.zoom;
     const nextY = gesture.startPosition.y + deltaY / gesture.zoom;
 
@@ -352,7 +430,7 @@ export default function Workspace({
     );
 
     const node: TextNode = {
-      id: createNodeId(),
+      id: uuidv4(),
       type: "text_node",
       position: { x, y },
       width,
@@ -593,6 +671,7 @@ export default function Workspace({
                 selected={selectedNodeId === node.id}
                 onSelect={setSelectedNodeId}
                 onDragStart={startNodeDrag}
+                onResizeStart={startNodeResize}
                 onChange={updateTextNode}
               />
             ))}

@@ -10,6 +10,10 @@ type TextNodeViewProps = {
     node: TextNode,
   ) => void;
   onChange: (nodeId: string, patch: TextNodeContentPatch) => void;
+  onResizeStart: (
+    event: ReactPointerEvent<HTMLButtonElement>,
+    node: TextNode,
+  ) => void;
 };
 
 export default function TextNodeView({
@@ -17,6 +21,7 @@ export default function TextNodeView({
   selected,
   onSelect,
   onDragStart,
+  onResizeStart,
   onChange,
 }: TextNodeViewProps) {
   return (
@@ -67,6 +72,25 @@ export default function TextNodeView({
         }}
         className="min-h-0 w-full flex-1 resize-none overflow-y-auto overscroll-contain p-4 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 focus-visible:ring-inset"
       />
+      <button
+        type="button"
+        aria-label="텍스트 노드 크기 조절"
+        title="드래그해서 크기 조절"
+        onPointerDown={(event) => onResizeStart(event, node)}
+        className="absolute right-2 bottom-2 z-10 grid h-5 w-5 cursor-nwse-resize touch-none place-items-center rounded bg-white/90 text-neutral-500 select-none hover:bg-blue-100 hover:text-blue-600"
+      >
+        <svg
+          viewBox="0 0 16 16"
+          width="14"
+          height="14"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          aria-hidden="true"
+        >
+          <path d="M5 12 12 5M9 12l3-3" />
+        </svg>
+      </button>
     </article>
   );
 }
