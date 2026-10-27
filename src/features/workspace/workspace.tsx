@@ -1,12 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import Image from "next/image";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { v4 as uuidv4 } from "uuid";
-import type { PointerEvent as ReactPointerEvent } from "react";
+import type {
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+} from "react";
 import TextNodeView from "./text-node-view";
 import WorkspaceToolbar from "./workspace-toolbar";
 import { expandLegacyCanvas } from "./create-workspace";
+import {
+  createWorkspaceHistory,
+  workspaceHistoryReducer,
+} from "./workspace-history";
 import {
   loadWorkspaceDocument,
   saveWorkspaceDocument,
@@ -39,8 +47,8 @@ type Gesture =
       kind: "node";
       pointerId: number;
       startPointer: Point;
-      nodeId: string;
-      startPosition: Point;
+      startPositions: Map<string, Point>;
+      bounds: { left: number; top: number; right: number; bottom: number };
       zoom: number;
     }
   | {
@@ -51,7 +59,22 @@ type Gesture =
       startWidth: number;
       startHeight: number;
       zoom: number;
+    }
+  | {
+      kind: "marquee";
+      pointerId: number;
+      startPointer: Point;
+      startCanvas: Point;
+      zoom: number;
+      initialSelection: string[];
+      additive: boolean;
+      moved: boolean;
     };
+
+type SelectionRect = Point & { width: number; height: number };
+
+const iconButtonClassName =
+  "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded border border-neutral-300 hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-500 disabled:cursor-not-allowed disabled:opacity-40";
 
 export default function Workspace({
   projectId,
@@ -59,8 +82,17 @@ export default function Workspace({
   initialDocument,
   initialVersion,
 }: WorkspaceProps) {
-  const [workspace, setWorkspace] = useState<WorkspaceDocument>(() =>
-    expandLegacyCanvas(initialDocument),
+  const [history, dispatchHistory] = useReducer(
+    workspaceHistoryReducer,
+    initialDocument,
+    (document) => createWorkspaceHistory(expandLegacyCanvas(document)),
+  );
+  const workspace = history.present;
+  const setWorkspace = useCallback(
+    (update: (document: WorkspaceDocument) => WorkspaceDocument) => {
+      dispatchHistory({ type: "change", update });
+    },
+    [],
   );
 
   const [camera, setCamera] = useState<Camera>({
@@ -95,8 +127,15 @@ export default function Workspace({
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [hasUnsavedChanges]);
 
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null); //선택된 노드가 뭔지
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
+  const [selectionRect, setSelectionRect] = useState<SelectionRect | null>(
+    null,
+  );
   const [isPanning, setIsPanning] = useState(false); //드래그 상태따라 커서 변경
+  const hasPendingEdit =
+    history.transactionStart !== null && history.transactionStart !== workspace;
+  const canUndo = history.past.length > 0 || hasPendingEdit;
+  const canRedo = history.future.length > 0 && !hasPendingEdit;
 
   const fitCanvas = useCallback(() => {
     //화면 맞춤
@@ -133,6 +172,11 @@ export default function Workspace({
 
     gestureRef.current = null;
     setIsPanning(false);
+    setSelectionRect(null);
+
+    if (gesture?.kind === "node" || gesture?.kind === "resize") {
+      dispatchHistory({ type: "commit" });
+    }
 
     if (gesture && viewport?.hasPointerCapture(gesture.pointerId)) {
       viewport.releasePointerCapture(gesture.pointerId);
@@ -250,6 +294,124 @@ export default function Workspace({
     setIsPanning(true);
   }
 
+  function selectNode(nodeId: string, additive = false) {
+    if (gestureRef.current) return;
+
+    setSelectedNodeIds((current) => {
+      if (!additive) {
+        return current.length === 1 && current[0] === nodeId
+          ? current
+          : [nodeId];
+      }
+
+      return current.includes(nodeId)
+        ? current.filter((id) => id !== nodeId)
+        : [...current, nodeId];
+    });
+  }
+
+  function startMarquee(event: ReactPointerEvent<HTMLDivElement>) {
+    const viewport = viewportRef.current;
+    if (
+      event.button !== 0 ||
+      gestureRef.current ||
+      !viewport ||
+      !(event.target instanceof Element) ||
+      event.target.closest("[data-node-id]")
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    const rect = viewport.getBoundingClientRect();
+    viewport.focus({ preventScroll: true });
+    viewport.setPointerCapture(event.pointerId);
+
+    gestureRef.current = {
+      kind: "marquee",
+      pointerId: event.pointerId,
+      startPointer: { x: event.clientX, y: event.clientY },
+      startCanvas: {
+        x: (event.clientX - rect.left - camera.x) / camera.zoom,
+        y: (event.clientY - rect.top - camera.y) / camera.zoom,
+      },
+      zoom: camera.zoom,
+      initialSelection: [...selectedNodeIds],
+      additive: event.shiftKey,
+      moved: false,
+    };
+    if (!event.shiftKey) setSelectedNodeIds([]);
+  }
+
+  function beginTextEdit() {
+    if (!gestureRef.current) dispatchHistory({ type: "begin" });
+  }
+
+  function endTextEdit() {
+    dispatchHistory({ type: "commit" });
+  }
+
+  function undo() {
+    if (gestureRef.current) return;
+    dispatchHistory({ type: "undo" });
+    setSelectedNodeIds([]);
+  }
+
+  function redo() {
+    if (gestureRef.current) return;
+    dispatchHistory({ type: "redo" });
+    setSelectedNodeIds([]);
+  }
+
+  function handleWorkspaceKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
+    if (
+      event.defaultPrevented ||
+      event.nativeEvent.isComposing ||
+      event.keyCode === 229 ||
+      event.altKey ||
+      (event.target instanceof Element &&
+        event.target.closest("input, textarea, [contenteditable='true']"))
+    ) {
+      return;
+    }
+
+    if (event.key === "Escape") {
+      const gesture = gestureRef.current;
+      if (gesture) {
+        if (gesture.kind === "node" || gesture.kind === "resize") {
+          dispatchHistory({ type: "cancel" });
+        } else if (gesture.kind === "marquee") {
+          setSelectedNodeIds(gesture.initialSelection);
+        } else {
+          setCamera((current) => ({ ...current, ...gesture.startCamera }));
+        }
+        clearGesture();
+      } else {
+        setSelectedNodeIds([]);
+      }
+      event.preventDefault();
+      return;
+    }
+
+    if (event.ctrlKey || event.metaKey) {
+      const key = event.key.toLowerCase();
+      if (key === "z") {
+        event.preventDefault();
+        if (event.shiftKey) redo();
+        else undo();
+      } else if (key === "y" && !event.shiftKey) {
+        event.preventDefault();
+        redo();
+      }
+      return;
+    }
+
+    if (event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      deleteSelectedNodes();
+    }
+  }
+
   function startNodeDrag(
     event: ReactPointerEvent<HTMLButtonElement>,
     node: TextNode,
@@ -261,9 +423,20 @@ export default function Workspace({
     event.preventDefault();
     event.stopPropagation();
 
+    if (event.shiftKey) {
+      selectNode(node.id, true);
+      return;
+    }
+
+    // 선택된 노드를 잡으면 전체 선택을 유지하고, 다른 노드를 잡으면 교체한다.
+    const draggedNodes = selectedNodeIds.includes(node.id)
+      ? workspace.nodes.filter((item) => selectedNodeIds.includes(item.id))
+      : [node];
+
     viewport.focus({ preventScroll: true });
     viewport.setPointerCapture(event.pointerId);
 
+    dispatchHistory({ type: "begin" });
     gestureRef.current = {
       kind: "node",
       pointerId: event.pointerId,
@@ -271,12 +444,23 @@ export default function Workspace({
         x: event.clientX,
         y: event.clientY,
       },
-      nodeId: node.id,
-      startPosition: { ...node.position },
+      startPositions: new Map(
+        draggedNodes.map((item) => [item.id, { ...item.position }]),
+      ),
+      bounds: {
+        left: Math.min(...draggedNodes.map((item) => item.position.x)),
+        top: Math.min(...draggedNodes.map((item) => item.position.y)),
+        right: Math.max(
+          ...draggedNodes.map((item) => item.position.x + item.width),
+        ),
+        bottom: Math.max(
+          ...draggedNodes.map((item) => item.position.y + item.height),
+        ),
+      },
       zoom: camera.zoom,
     };
 
-    setSelectedNodeId(node.id);
+    setSelectedNodeIds(draggedNodes.map((item) => item.id));
   }
 
   function startNodeResize(
@@ -293,6 +477,7 @@ export default function Workspace({
     viewport.focus({ preventScroll: true });
     viewport.setPointerCapture(event.pointerId);
 
+    dispatchHistory({ type: "begin" });
     gestureRef.current = {
       kind: "resize",
       pointerId: event.pointerId,
@@ -306,7 +491,7 @@ export default function Workspace({
       zoom: camera.zoom,
     };
 
-    setSelectedNodeId(node.id);
+    setSelectedNodeIds([node.id]);
   }
 
   function moveGesture(event: ReactPointerEvent<HTMLDivElement>) {
@@ -331,6 +516,37 @@ export default function Workspace({
         y: gesture.startCamera.y + deltaY,
       }));
 
+      return;
+    }
+
+    if (gesture.kind === "marquee") {
+      if (!gesture.moved && Math.hypot(deltaX, deltaY) < 3) return;
+      gesture.moved = true;
+
+      const endX = gesture.startCanvas.x + deltaX / gesture.zoom;
+      const endY = gesture.startCanvas.y + deltaY / gesture.zoom;
+      const rect = {
+        x: Math.min(gesture.startCanvas.x, endX),
+        y: Math.min(gesture.startCanvas.y, endY),
+        width: Math.abs(endX - gesture.startCanvas.x),
+        height: Math.abs(endY - gesture.startCanvas.y),
+      };
+      setSelectionRect(rect);
+
+      // 선택 사각형과 일부라도 겹치는 노드를 선택한다.
+      const hits = workspace.nodes.filter(
+        (node) =>
+          node.position.x < rect.x + rect.width &&
+          node.position.x + node.width > rect.x &&
+          node.position.y < rect.y + rect.height &&
+          node.position.y + node.height > rect.y,
+      );
+      setSelectedNodeIds([
+        ...new Set([
+          ...(gesture.additive ? gesture.initialSelection : []),
+          ...hits.map((node) => node.id),
+        ]),
+      ]);
       return;
     }
 
@@ -372,27 +588,38 @@ export default function Workspace({
       return;
     }
 
-    // pan과 resize를 처리한 뒤에는 노드 이동 Gesture만 남는다.
-    const nextX = gesture.startPosition.x + deltaX / gesture.zoom;
-    const nextY = gesture.startPosition.y + deltaY / gesture.zoom;
+    setWorkspace((current) => {
+      // 전체 선택의 이동량을 한 번 제한해 경계에서도 노드 사이 간격을 유지한다.
+      const moveX = Math.max(
+        -gesture.bounds.left,
+        Math.min(
+          deltaX / gesture.zoom,
+          current.canvas.width - gesture.bounds.right,
+        ),
+      );
+      const moveY = Math.max(
+        -gesture.bounds.top,
+        Math.min(
+          deltaY / gesture.zoom,
+          current.canvas.height - gesture.bounds.bottom,
+        ),
+      );
+      let changed = false;
 
-    setWorkspace((current) => ({
-      ...current,
-      nodes: current.nodes.map((node) => {
-        if (node.id !== gesture.nodeId) return node;
+      const nodes = current.nodes.map((node) => {
+        const startPosition = gesture.startPositions.get(node.id);
+        if (!startPosition) return node;
 
-        return {
-          ...node,
-          position: {
-            x: Math.max(0, Math.min(nextX, current.canvas.width - node.width)),
-            y: Math.max(
-              0,
-              Math.min(nextY, current.canvas.height - node.height),
-            ),
-          },
-        };
-      }),
-    }));
+        const x = startPosition.x + moveX;
+        const y = startPosition.y + moveY;
+        if (x === node.position.x && y === node.position.y) return node;
+
+        changed = true;
+        return { ...node, position: { x, y } };
+      });
+
+      return changed ? { ...current, nodes } : current;
+    });
   }
 
   function endGesture(event: ReactPointerEvent<HTMLDivElement>) {
@@ -443,7 +670,7 @@ export default function Workspace({
       ...current,
       nodes: [...current.nodes, node],
     }));
-    setSelectedNodeId(node.id);
+    setSelectedNodeIds([node.id]);
     // 캔버스 밖을 보고 있었더라도 새 노드를 볼 수 있게 한다.
     setCamera((current) => ({
       ...current,
@@ -453,22 +680,32 @@ export default function Workspace({
   }
 
   function updateTextNode(nodeId: string, patch: TextNodeContentPatch) {
-    setWorkspace((current) => ({
-      ...current,
-      nodes: current.nodes.map((node) =>
-        node.id === nodeId ? { ...node, ...patch } : node,
-      ),
-    }));
+    if (gestureRef.current) return;
+    setWorkspace((current) => {
+      let changed = false;
+      const nodes = current.nodes.map((node) => {
+        if (
+          node.id !== nodeId ||
+          ((patch.title === undefined || patch.title === node.title) &&
+            (patch.text === undefined || patch.text === node.text))
+        ) {
+          return node;
+        }
+        changed = true;
+        return { ...node, ...patch };
+      });
+      return changed ? { ...current, nodes } : current;
+    });
   }
-  function deleteSelectedNode() {
-    if (!selectedNodeId || gestureRef.current) return;
+  function deleteSelectedNodes() {
+    if (selectedNodeIds.length === 0 || gestureRef.current) return;
 
     setWorkspace((current) => ({
       ...current,
-      nodes: current.nodes.filter((node) => node.id !== selectedNodeId),
+      nodes: current.nodes.filter((node) => !selectedNodeIds.includes(node.id)),
     }));
 
-    setSelectedNodeId(null);
+    setSelectedNodeIds([]);
   }
 
   async function saveWorkspace() {
@@ -536,7 +773,10 @@ export default function Workspace({
   }
 
   return (
-    <main className="fixed inset-0 flex flex-col bg-neutral-200 text-neutral-900">
+    <main
+      className="fixed inset-0 flex flex-col bg-neutral-200 text-neutral-900"
+      onKeyDown={handleWorkspaceKeyDown}
+    >
       <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-3 border-b border-neutral-300 bg-white px-4 py-2">
         <Link
           href="/dashboard"
@@ -565,11 +805,71 @@ export default function Workspace({
         </span>
         <button
           type="button"
-          onClick={deleteSelectedNode}
-          disabled={!selectedNodeId}
-          className="shrink-0 rounded border border-neutral-300 px-3 py-1.5 text-sm hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-40"
+          onClick={undo}
+          disabled={!canUndo}
+          title="실행 취소 (Ctrl+Z)"
+          aria-label="실행 취소"
+          aria-keyshortcuts="Control+Z Meta+Z"
+          className={iconButtonClassName}
         >
-          선택 삭제
+          <Image
+            src="/icons/undo.png"
+            alt=""
+            aria-hidden="true"
+            width={24}
+            height={24}
+            unoptimized
+            draggable={false}
+            className="pointer-events-none h-6 w-6 object-contain select-none"
+          />
+        </button>
+        <button
+          type="button"
+          onClick={redo}
+          disabled={!canRedo}
+          title="다시 실행 (Ctrl+Shift+Z / Ctrl+Y)"
+          aria-label="다시 실행"
+          aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z Control+Y"
+          className={iconButtonClassName}
+        >
+          <Image
+            src="/icons/redo.png"
+            alt=""
+            aria-hidden="true"
+            width={24}
+            height={24}
+            unoptimized
+            draggable={false}
+            className="pointer-events-none h-6 w-6 object-contain select-none"
+          />
+        </button>
+        <button
+          type="button"
+          onClick={deleteSelectedNodes}
+          disabled={selectedNodeIds.length === 0}
+          aria-label={
+            selectedNodeIds.length > 0
+              ? `선택 삭제 (${selectedNodeIds.length}개)`
+              : "선택 삭제"
+          }
+          title={
+            selectedNodeIds.length > 0
+              ? `선택한 노드 ${selectedNodeIds.length}개 삭제 (Delete / Backspace)`
+              : "선택 삭제 (Delete / Backspace)"
+          }
+          aria-keyshortcuts="Delete Backspace"
+          className={iconButtonClassName}
+        >
+          <Image
+            src="/icons/trash.png"
+            alt=""
+            aria-hidden="true"
+            width={24}
+            height={24}
+            unoptimized
+            draggable={false}
+            className="pointer-events-none h-6 w-6 object-contain select-none"
+          />
         </button>
         <button
           type="button"
@@ -630,17 +930,7 @@ export default function Workspace({
           }}
           aria-label="작업 공간 뷰포트"
           onPointerDownCapture={startPan}
-          onPointerDown={(event) => {
-            if (
-              event.button === 0 &&
-              !gestureRef.current &&
-              event.target instanceof Element &&
-              !event.target.closest("[data-node-id]")
-            ) {
-              setSelectedNodeId(null);
-              event.currentTarget.focus({ preventScroll: true });
-            }
-          }}
+          onPointerDown={startMarquee}
           onPointerMove={moveGesture}
           onPointerUp={endGesture}
           onPointerCancel={endGesture}
@@ -668,13 +958,28 @@ export default function Workspace({
               <TextNodeView
                 key={node.id}
                 node={node}
-                selected={selectedNodeId === node.id}
-                onSelect={setSelectedNodeId}
+                selected={selectedNodeIds.includes(node.id)}
+                onSelect={selectNode}
                 onDragStart={startNodeDrag}
                 onResizeStart={startNodeResize}
                 onChange={updateTextNode}
+                onEditStart={beginTextEdit}
+                onEditEnd={endTextEdit}
               />
             ))}
+            {selectionRect && (
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute z-20 border border-blue-500 bg-blue-500/10"
+                style={{
+                  left: selectionRect.x,
+                  top: selectionRect.y,
+                  width: selectionRect.width,
+                  height: selectionRect.height,
+                  borderWidth: 1 / camera.zoom,
+                }}
+              />
+            )}
           </div>
         </div>
       </div>

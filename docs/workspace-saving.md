@@ -17,12 +17,22 @@
 
 - `workspace.tsx`: 수동 저장 상태, 저장 버튼 이벤트, 미저장 이탈 경고.
 - `workspace-save-client.ts`: GET/PUT 통신, 응답 검증, 요청 시간 제한.
+- `workspace-history.ts`: 편집 이력과 실행 취소·다시 실행. 저장 요청을 보내지 않는다.
 - `src/app/api/projects/[projectId]/document/route.ts`: 로그인·소유권·데이터 형식·문서 버전 검증.
 
 과거 브라우저 임시본은 자동으로 삭제하지 않았다. 현재 앱은 그 데이터를 사용하지 않는다.
+
+## 편집 이력과 저장의 관계
+
+- 실행 취소 이력은 현재 화면의 메모리에 최대 100단계만 보관한다. 자동 저장이나 브라우저 임시 저장이 아니며 새로고침하면 사라진다.
+- 노드 생성·삭제, 이동·크기 조절, 제목·본문 편집을 되돌릴 수 있다. 선택 상태와 카메라 이동은 이력에 포함하지 않는다.
+- 이동·크기 조절은 드래그 한 번, 텍스트 편집은 입력칸에 들어갔다 나오는 한 번을 이력 하나로 묶는다.
+- 입력칸 안의 Ctrl+Z는 브라우저 기본 텍스트 실행 취소를 유지한다. 입력칸 밖에서는 Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y로 작업 공간 이력을 조작한다.
+- 실행 취소로 마지막 저장 스냅샷에 돌아오면 미저장 표시가 해제된다. 서버 문서와 문서 버전은 변경하지 않으며, 다른 상태를 서버에 반영하려면 저장 버튼을 눌러야 한다.
 
 ## 검증
 
 ```powershell
 node --import tsx --test scripts/test-workspace-save-client.ts
+node --import tsx --test scripts/test-workspace-editing.ts
 ```

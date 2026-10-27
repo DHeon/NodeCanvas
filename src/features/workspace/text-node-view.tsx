@@ -4,12 +4,14 @@ import type { TextNode, TextNodeContentPatch } from "./types";
 type TextNodeViewProps = {
   node: TextNode;
   selected: boolean;
-  onSelect: (nodeId: string) => void;
+  onSelect: (nodeId: string, additive?: boolean) => void;
   onDragStart: (
     event: ReactPointerEvent<HTMLButtonElement>,
     node: TextNode,
   ) => void;
   onChange: (nodeId: string, patch: TextNodeContentPatch) => void;
+  onEditStart: () => void;
+  onEditEnd: () => void;
   onResizeStart: (
     event: ReactPointerEvent<HTMLButtonElement>,
     node: TextNode,
@@ -23,14 +25,18 @@ export default function TextNodeView({
   onDragStart,
   onResizeStart,
   onChange,
+  onEditStart,
+  onEditEnd,
 }: TextNodeViewProps) {
   return (
     <article
       data-node-id={node.id}
       onPointerDown={(event) => {
-        if (event.button === 0) onSelect(node.id);
+        if (event.button !== 0) return;
+        // Shift 선택은 입력칸 포커스 이동과 글자 범위 선택을 막는다.
+        if (event.shiftKey) event.preventDefault();
+        onSelect(node.id, event.shiftKey);
       }}
-      onFocus={() => onSelect(node.id)}
       className={`absolute flex flex-col overflow-hidden rounded-2xl border bg-white shadow-sm ${
         selected ? "border-blue-500 ring-2 ring-blue-200" : "border-neutral-300"
       }`}
@@ -48,6 +54,7 @@ export default function TextNodeView({
           aria-label="텍스트 노드 이동"
           title="드래그해서 이동"
           onPointerDown={(event) => onDragStart(event, node)}
+          onFocus={() => onSelect(node.id)}
           className="shrink-0 cursor-grab touch-none rounded px-1 text-neutral-500 select-none hover:bg-neutral-200 active:cursor-grabbing"
         >
           ⠿
@@ -56,6 +63,11 @@ export default function TextNodeView({
           aria-label="텍스트 노드 제목"
           placeholder="제목"
           value={node.title}
+          onFocus={() => {
+            onSelect(node.id);
+            onEditStart();
+          }}
+          onBlur={onEditEnd}
           onChange={(event) => {
             onChange(node.id, { title: event.target.value });
           }}
@@ -67,6 +79,11 @@ export default function TextNodeView({
         aria-label="텍스트 노드 내용"
         placeholder="내용을 입력하세요"
         value={node.text}
+        onFocus={() => {
+          onSelect(node.id);
+          onEditStart();
+        }}
+        onBlur={onEditEnd}
         onChange={(event) => {
           onChange(node.id, { text: event.target.value });
         }}
@@ -77,6 +94,7 @@ export default function TextNodeView({
         aria-label="텍스트 노드 크기 조절"
         title="드래그해서 크기 조절"
         onPointerDown={(event) => onResizeStart(event, node)}
+        onFocus={() => onSelect(node.id)}
         className="absolute right-2 bottom-2 z-10 grid h-5 w-5 cursor-nwse-resize touch-none place-items-center rounded bg-white/90 text-neutral-500 select-none hover:bg-blue-100 hover:text-blue-600"
       >
         <svg
