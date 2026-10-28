@@ -152,8 +152,8 @@ export default function TextNodeView({
           } ${activePort === side ? "bg-violet-500" : "bg-white hover:bg-violet-100"}`}
           style={{
             ...portPositions[side],
-            width: 10 / zoom,
-            height: 10 / zoom,
+            width: 8 / zoom,
+            height: 8 / zoom,
             borderWidth: 2 / zoom,
           }}
         />
