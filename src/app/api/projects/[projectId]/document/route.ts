@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { getSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { appOrigins } from "@/lib/app-origins";
 import { createWorkspace } from "@/features/workspace/create-workspace";
 import { workspaceDocumentSchema } from "@/features/workspace/workspace-schema";
 
@@ -18,10 +19,7 @@ type DocumentRouteContext = {
   }>;
 };
 
-export async function GET(
-  _request: Request,
-  { params }: DocumentRouteContext,
-) {
+export async function GET(_request: Request, { params }: DocumentRouteContext) {
   try {
     const session = await getSession();
 
@@ -64,9 +62,7 @@ export async function GET(
     }
 
     const result = workspaceDocumentSchema.safeParse(
-      project.document === null
-        ? createWorkspace()
-        : project.document,
+      project.document === null ? createWorkspace() : project.document,
     );
 
     if (!result.success) {
@@ -100,12 +96,9 @@ export async function GET(
   }
 }
 
-export async function PUT(
-  request: Request,
-  { params }: DocumentRouteContext,
-) {
+export async function PUT(request: Request, { params }: DocumentRouteContext) {
   try {
-    const session = await getSession();  // 세션 확인
+    const session = await getSession(); // 세션 확인
 
     if (!session) {
       return Response.json(
@@ -114,12 +107,9 @@ export async function PUT(
       );
     }
 
-    // 사이트에서 보낸 저장 요청만 허용
-    const expectedOrigin = new URL(
-      process.env.BETTER_AUTH_URL!,
-    ).origin;
-
-    if (request.headers.get("origin") !== expectedOrigin) {
+    // 인증과 같은 허용 목록으로 저장 요청의 Origin을 검증한다.
+    const origin = request.headers.get("origin");
+    if (!origin || !appOrigins.includes(origin)) {
       return Response.json(
         { message: "허용되지 않은 요청입니다." },
         { status: 403 },
@@ -129,14 +119,15 @@ export async function PUT(
     const { projectId } = await params;
     const idResult = z.uuid().safeParse(projectId);
 
-    if (!idResult.success) { //uuid 형식인가 확인
+    if (!idResult.success) {
+      //uuid 형식인가 확인
       return Response.json(
         { message: "프로젝트 ID 형식이 올바르지 않습니다." },
         { status: 400 },
       );
     }
 
-    const contentType = request.headers  //json 형식인가 확인
+    const contentType = request.headers //json 형식인가 확인
       .get("content-type")
       ?.split(";")[0]
       .trim()
@@ -160,7 +151,7 @@ export async function PUT(
       );
     }
 
-    const result = saveDocumentSchema.safeParse(body);  //json 데이터 무결성 검사
+    const result = saveDocumentSchema.safeParse(body); //json 데이터 무결성 검사
 
     if (!result.success) {
       return Response.json(
@@ -174,11 +165,12 @@ export async function PUT(
 
     const { document, expectedVersion } = result.data;
 
-    const saved = await prisma.project.updateMany({  //실제 저장
+    const saved = await prisma.project.updateMany({
+      //실제 저장
       where: {
         id: idResult.data,
         ownerId: session.user.id,
-        documentVersion: expectedVersion,  //현재 문서에서 저장할 시점에서의 버전으로 업데이트를 해달라고함.
+        documentVersion: expectedVersion, //현재 문서에서 저장할 시점에서의 버전으로 업데이트를 해달라고함.
       },
       data: {
         document,
@@ -206,7 +198,8 @@ export async function PUT(
         );
       }
 
-      return Response.json(  //프로젝트가 존재는 하면 버전이 달라 저장이 안되는 걸로 처리
+      return Response.json(
+        //프로젝트가 존재는 하면 버전이 달라 저장이 안되는 걸로 처리
         {
           message:
             "다른 화면에서 저장된 변경 사항이 있습니다. 현재 작업은 저장되지 않았습니다.",

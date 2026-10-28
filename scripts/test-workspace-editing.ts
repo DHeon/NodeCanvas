@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import ts from "typescript";
@@ -7,11 +8,23 @@ import {
   workspaceHistoryReducer,
   type WorkspaceHistory,
 } from "../src/features/workspace/workspace-history";
-import type { WorkspaceDocument } from "../src/features/workspace/types";
+import type {
+  ConnectionEndpoint,
+  Point,
+  WorkspaceDocument,
+} from "../src/features/workspace/types";
+import {
+  CONNECTION_SIDES,
+  getConnectionKey,
+  getConnectionPath,
+  getConnectionPoint,
+} from "../src/features/workspace/connections";
+import { workspaceDocumentSchema } from "../src/features/workspace/workspace-schema";
 
 function fixture(): WorkspaceDocument {
   return {
     canvas: { width: 2000, height: 1200 },
+    connections: [],
     nodes: [
       {
         id: "a",
@@ -172,6 +185,9 @@ const names = [
   "endGesture",
   "updateTextNode",
   "deleteSelectedNodes",
+  "getCanvasPoint",
+  "getConnectionHover",
+  "startNodeConnection",
 ];
 const functions = new Map<string, string>();
 let clearGesture = "";
@@ -204,8 +220,12 @@ class TestElement {
   constructor(
     private editable = false,
     private node = false,
+    public dataset: { nodeId?: string; connectionSide?: string } = {},
   ) {}
   closest(selector: string) {
+    if (selector === "[data-connection-side]") {
+      return this.dataset.connectionSide ? this : null;
+    }
     return (selector === "[data-node-id]" ? this.node : this.editable)
       ? this
       : null;
@@ -219,6 +239,13 @@ type TestState = {
   rect: unknown;
   panning: boolean;
   captured: boolean;
+  draft: {
+    source: ConnectionEndpoint;
+    pointer: Point;
+    hoveredNodeId: string | null;
+    target: ConnectionEndpoint | null;
+  } | null;
+  hoveredElement: TestElement | null;
 };
 type Handlers = Record<string, (...args: unknown[]) => void>;
 const factory = new Function(
@@ -227,6 +254,11 @@ const factory = new Function(
   "gestureRef",
   "workspaceHistoryReducer",
   "Element",
+  "document",
+  "uuidv4",
+  "CONNECTION_SIDES",
+  "getConnectionPoint",
+  "getConnectionKey",
   `
   const workspace = state.history.present;
   const selectedNodeIds = state.selected;
@@ -236,6 +268,7 @@ const factory = new Function(
   const setSelectedNodeIds = update => { state.selected = typeof update === "function" ? update(state.selected) : update; };
   const setCamera = update => { state.camera = update(state.camera); };
   const setSelectionRect = rect => { state.rect = rect; };
+  const setConnectionDraft = draft => { state.draft = draft; };
   const setIsPanning = value => { state.panning = value; };
   ${compiled}
   return { ${names.join(", ")}, clearGesture };
@@ -250,6 +283,8 @@ function setup(selected: string[] = []) {
     rect: null,
     panning: false,
     captured: false,
+    draft: null,
+    hoveredElement: null,
   };
   const gestureRef: { current: unknown } = { current: null };
   const viewport = {
@@ -278,6 +313,11 @@ function setup(selected: string[] = []) {
         gestureRef,
         workspaceHistoryReducer,
         TestElement,
+        { elementFromPoint: () => state.hoveredElement },
+        randomUUID,
+        CONNECTION_SIDES,
+        getConnectionPoint,
+        getConnectionKey,
       )[name](...args);
     },
   };
@@ -335,6 +375,194 @@ test("양방향 박스 선택은 카메라 좌표를 환산하고 문서를 변�
     assert.equal(h.state.history.past.length, 0);
     assert.equal(h.state.captured, false);
   }
+});
+
+test("네 방향 연결점과 곡선은 노드의 현재 좌표·크기에서 계산한다", () => {
+  const [node, target] = fixture().nodes;
+  assert.deepEqual(getConnectionPoint(node, "top"), { x: 260, y: 100 });
+  assert.deepEqual(getConnectionPoint(node, "right"), { x: 420, y: 210 });
+  assert.deepEqual(getConnectionPoint(node, "bottom"), { x: 260, y: 320 });
+  assert.deepEqual(getConnectionPoint(node, "left"), { x: 100, y: 210 });
+  for (const side of CONNECTION_SIDES) {
+    for (const targetSide of CONNECTION_SIDES) {
+      const start = getConnectionPoint(node, side);
+      const end = getConnectionPoint(target, targetSide);
+      const path = getConnectionPath(start, end, side, targetSide);
+      assert.ok(path.startsWith(`M ${start.x} ${start.y} C `));
+      assert.ok(path.endsWith(`${end.x} ${end.y}`));
+      assert.ok(!path.includes("NaN"));
+    }
+  }
+});
+
+test("연결 미리보기는 커서 좌표를 유지하며 점 근처에서 스냅하지 않는다", () => {
+  const h = setup();
+  const document = h.state.history.present;
+  h.call("startNodeConnection", pointer(), document.nodes[0], "right");
+  h.state.hoveredElement = new TestElement(false, true, { nodeId: "b" });
+  h.call("moveGesture", pointer({ clientX: 322, clientY: 269 }));
+  assert.deepEqual(h.state.draft?.pointer, { x: 604, y: 458 });
+  assert.equal(h.state.draft?.hoveredNodeId, "b");
+  assert.equal(h.state.draft?.target, null);
+  assert.equal(h.state.history.present, document);
+  h.call("endGesture", pointer({ type: "pointerup", buttons: 0 }));
+  assert.equal(h.state.history.present, document);
+  assert.equal(h.state.history.past.length, 0);
+  assert.equal(h.state.draft, null);
+});
+
+test("대상 점 위에서 놓을 때만 연결하고 한 단계로 실행 취소·복원한다", () => {
+  const h = setup();
+  const document = h.state.history.present;
+  h.call("startNodeConnection", pointer(), document.nodes[0], "right");
+  h.state.hoveredElement = new TestElement(false, true, {
+    nodeId: "b",
+    connectionSide: "left",
+  });
+  h.call("moveGesture", pointer({ clientX: 320, clientY: 275 }));
+  assert.deepEqual(h.state.draft?.target, { nodeId: "b", side: "left" });
+  assert.equal(h.state.history.present.connections.length, 0);
+  h.call("endGesture", pointer({ type: "pointerup", buttons: 0 }));
+  const [connection] = h.state.history.present.connections;
+  assert.deepEqual(connection.source, { nodeId: "a", side: "right" });
+  assert.deepEqual(connection.target, { nodeId: "b", side: "left" });
+  assert.equal(h.state.history.past.length, 1);
+  h.call("undo");
+  assert.equal(h.state.history.present, document);
+  h.call("redo");
+  assert.equal(h.state.history.present.connections[0], connection);
+});
+
+test("Escape·포인터 취소·캡처 해제·창 전환은 연결을 만들지 않는다", () => {
+  for (const action of [
+    "Escape",
+    "pointercancel",
+    "lostpointercapture",
+    "blur",
+  ]) {
+    const h = setup();
+    const document = h.state.history.present;
+    h.call("startNodeConnection", pointer(), document.nodes[0], "right");
+    h.state.hoveredElement = new TestElement(false, true, {
+      nodeId: "b",
+      connectionSide: "left",
+    });
+    if (action === "Escape") h.call("handleWorkspaceKeyDown", key("Escape"));
+    else if (action === "blur") h.call("clearGesture");
+    else h.call("endGesture", pointer({ type: action, buttons: 0 }));
+    assert.equal(h.state.history.present, document);
+    assert.equal(h.state.history.past.length, 0);
+    assert.equal(h.state.draft, null);
+    assert.equal(h.state.captured, false);
+  }
+});
+
+test("자기 노드와 연결하거나 같은 두 점을 중복 연결하지 않는다", () => {
+  const h = setup();
+  h.call(
+    "startNodeConnection",
+    pointer(),
+    h.state.history.present.nodes[0],
+    "right",
+  );
+  h.state.hoveredElement = new TestElement(false, true, {
+    nodeId: "a",
+    connectionSide: "top",
+  });
+  h.call("endGesture", pointer({ type: "pointerup", buttons: 0 }));
+  assert.equal(h.state.history.present.connections.length, 0);
+
+  for (let i = 0; i < 2; i++) {
+    h.call(
+      "startNodeConnection",
+      pointer(),
+      h.state.history.present.nodes[0],
+      "right",
+    );
+    h.state.hoveredElement = new TestElement(false, true, {
+      nodeId: "b",
+      connectionSide: "left",
+    });
+    h.call("endGesture", pointer({ type: "pointerup", buttons: 0 }));
+  }
+  const document = h.state.history.present;
+  h.call("startNodeConnection", pointer(), document.nodes[1], "left");
+  h.state.hoveredElement = new TestElement(false, true, {
+    nodeId: "a",
+    connectionSide: "right",
+  });
+  h.call("endGesture", pointer({ type: "pointerup", buttons: 0 }));
+  assert.equal(h.state.history.present, document);
+  assert.equal(document.connections.length, 1);
+  assert.equal(h.state.history.past.length, 1);
+});
+
+test("연결된 노드를 삭제하면 관련 연결도 정리되고 함께 복원된다", () => {
+  const h = setup();
+  h.call(
+    "startNodeConnection",
+    pointer(),
+    h.state.history.present.nodes[0],
+    "right",
+  );
+  h.state.hoveredElement = new TestElement(false, true, {
+    nodeId: "b",
+    connectionSide: "left",
+  });
+  h.call("endGesture", pointer({ type: "pointerup", buttons: 0 }));
+  const document = h.state.history.present;
+  h.call("selectNode", "b");
+  h.call("deleteSelectedNodes");
+  assert.equal(h.state.history.present.connections.length, 0);
+  h.call("undo");
+  assert.equal(h.state.history.present, document);
+});
+
+test("기존 문서는 빈 연결 목록으로 열고 잘못된 연결 데이터는 거절한다", () => {
+  const document = fixture();
+  document.nodes = document.nodes.map((node) => ({
+    ...node,
+    id: randomUUID(),
+  }));
+  const legacy = { canvas: document.canvas, nodes: document.nodes };
+  assert.deepEqual(workspaceDocumentSchema.parse(legacy).connections, []);
+  const connection = {
+    id: randomUUID(),
+    source: { nodeId: document.nodes[0].id, side: "right" },
+    target: { nodeId: document.nodes[1].id, side: "left" },
+  };
+  const valid = { ...document, connections: [connection] };
+  assert.ok(workspaceDocumentSchema.safeParse(valid).success);
+  assert.deepEqual(
+    workspaceDocumentSchema.parse(JSON.parse(JSON.stringify(valid))),
+    valid,
+  );
+  for (const target of [
+    { nodeId: randomUUID(), side: "left" },
+    { nodeId: document.nodes[0].id, side: "left" },
+    { nodeId: document.nodes[1].id, side: "invalid" },
+  ]) {
+    assert.ok(
+      !workspaceDocumentSchema.safeParse({
+        ...document,
+        connections: [{ ...connection, target }],
+      }).success,
+    );
+  }
+  assert.ok(
+    !workspaceDocumentSchema.safeParse({
+      ...valid,
+      connections: [
+        connection,
+        {
+          ...connection,
+          id: randomUUID(),
+          source: connection.target,
+          target: connection.source,
+        },
+      ],
+    }).success,
+  );
 });
 
 test("Shift 박스 선택은 기존 선택을 합치고 Escape는 원래 선택으로 복원한다", () => {

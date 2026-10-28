@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "Nono | 7주차 노드 편집과 실행 흐름",
+  title: "Nono | 7주차 노드 크기 조절과 다중선택, Undo Redo",
   description:
     "노드 크기 조절, 다중 선택과 이동, 실행 취소가 이벤트와 상태 변경으로 이어지는 과정",
 };
@@ -184,7 +184,7 @@ selected={selectedNodeIds.includes(node.id)}`,
   },
   {
     id: "move-delete",
-    title: "함께 이동과 일괄 삭제",
+    title: "다중 이동, 삭제",
     action: "여러 노드를 선택한 뒤 ⠿ 드래그 / 선택 삭제 버튼 또는 Delete",
     result:
       "선택한 노드만 함께 이동하거나 삭제한다. 경계에 닿아도 노드 사이 간격을 유지한다.",
@@ -362,7 +362,7 @@ export default function Week7Page() {
             </Link>
           </div>
           <h1 className="mt-6 text-4xl leading-tight font-semibold tracking-tight sm:text-6xl">
-            노드 편집과 실행 흐름
+            노드 크기 조절과 다중선택, Undo Redo
           </h1>
           <p className="mt-6 max-w-3xl text-lg leading-8 text-neutral-300">
             크기 조절, 여러 노드 선택과 이동, 실행 취소·다시 실행
@@ -373,12 +373,6 @@ export default function Week7Page() {
           aria-label="발표 목차"
           className="sticky top-0 z-30 -mx-5 flex gap-6 overflow-x-auto border-y border-neutral-800 bg-neutral-950/95 px-5 py-4 backdrop-blur sm:-mx-8 sm:px-8"
         >
-          <a
-            href="#structure"
-            className="shrink-0 text-sm text-neutral-300 hover:text-violet-200"
-          >
-            공통 구조
-          </a>
           {workflows.map((flow, index) => (
             <a
               key={flow.id}
@@ -392,83 +386,6 @@ export default function Week7Page() {
             </a>
           ))}
         </nav>
-
-        <section
-          id="structure"
-          aria-labelledby="structure-title"
-          className="scroll-mt-24 border-b border-neutral-800 py-14 sm:py-16"
-        >
-          <p className="font-mono text-sm tracking-widest text-violet-300">
-            STRUCTURE
-          </p>
-          <h2 id="structure-title" className="mt-3 text-3xl font-semibold">
-            입력을 문서 변경에 연결하는 구조
-          </h2>
-          <ol className="mt-8 grid gap-6 md:grid-cols-4">
-            {[
-              [
-                "01",
-                "이벤트 수신",
-                "TextNodeView",
-                "버튼·입력칸의 이벤트와 노드 데이터를 부모에게 전달",
-              ],
-              [
-                "02",
-                "동작 구분",
-                "Workspace / gestureRef",
-                "선택, 이동, 크기 조절을 구분하고 시작 정보 기록",
-              ],
-              [
-                "03",
-                "문서 변경",
-                "workspaceHistoryReducer",
-                "편집 결과를 present에 반영하고 이력 관리",
-              ],
-              [
-                "04",
-                "화면 반영",
-                "history.present / node props",
-                "변경한 문서로 노드의 위치·크기·내용을 다시 렌더링",
-              ],
-            ].map(([number, title, file, detail]) => (
-              <li
-                key={number}
-                className="min-w-0 border-t border-neutral-700 pt-4"
-              >
-                <p className="font-mono text-sm text-violet-300">{number}</p>
-                <h3 className="mt-2 text-lg font-medium">{title}</h3>
-                <p className="mt-3 font-mono text-xs leading-5 break-words text-violet-200">
-                  {file}
-                </p>
-                <p className="mt-2 text-sm leading-7 text-neutral-400">
-                  {detail}
-                </p>
-              </li>
-            ))}
-          </ol>
-          <div className="mt-8 grid gap-6 border-t border-neutral-800 pt-6 md:grid-cols-2">
-            <div>
-              <h3 className="font-medium">문서 상태</h3>
-              <p className="mt-2 font-mono text-sm text-violet-200">
-                history.present
-              </p>
-              <p className="mt-2 text-sm leading-7 text-neutral-400">
-                노드 ID, 위치, 크기, 제목·본문을 보관한다. 저장 버튼이 이 문서를
-                서버에 보낸다.
-              </p>
-            </div>
-            <div>
-              <h3 className="font-medium">조작 상태</h3>
-              <p className="mt-2 font-mono text-sm text-violet-200">
-                gestureRef / selectedNodeIds / selectionRect
-              </p>
-              <p className="mt-2 text-sm leading-7 text-neutral-400">
-                드래그 정보, 선택 ID, 선택 사각형을 관리한다. 선택과 카메라
-                이동은 문서 이력에 넣지 않는다.
-              </p>
-            </div>
-          </div>
-        </section>
 
         {workflows.map((flow, index) => (
           <section

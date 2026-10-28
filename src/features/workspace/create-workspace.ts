@@ -18,5 +18,6 @@ export function createWorkspace(): WorkspaceDocument {
       ...DEFAULT_CANVAS_SIZE,
     },
     nodes: [],
+    connections: [],
   };
 }

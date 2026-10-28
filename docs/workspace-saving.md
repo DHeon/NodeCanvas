@@ -22,6 +22,15 @@
 
 과거 브라우저 임시본은 자동으로 삭제하지 않았다. 현재 앱은 그 데이터를 사용하지 않는다.
 
+## localhost와 IP 접속
+
+- `.env`의 `BETTER_AUTH_URL`은 기본 인증 주소다. 추가로 허용할 주소는 `APP_TRUSTED_ORIGINS`에 쉼표로 구분해 설정한다.
+- `src/lib/app-origins.ts`에서 만든 공통 목록을 Better Auth의 `trustedOrigins`와 문서 저장 API의 Origin 검사에 함께 사용한다.
+- Next.js 개발 서버의 `allowedDevOrigins`도 같은 목록의 호스트만 허용한다. Server Actions의 동일 출처 검사는 유지한다.
+- 주소는 프로토콜과 포트까지 일치해야 한다. IP가 바뀌면 `.env` 목록도 수정하고 서버를 재시작한다. 프로덕션 실행은 재빌드도 필요하다.
+- IP 접속을 받으려면 서버를 `npm run dev -- --hostname 0.0.0.0` 또는 빌드 후 `npm run start -- --hostname 0.0.0.0`으로 실행한다. 방화벽·공유기 설정은 별도다.
+- localhost와 IP의 로그인 쿠키는 각각 보관되므로 주소별로 로그인한다. 와일드카드 허용이나 CSRF 검사 해제는 하지 않는다.
+
 ## 편집 이력과 저장의 관계
 
 - 실행 취소 이력은 현재 화면의 메모리에 최대 100단계만 보관한다. 자동 저장이나 브라우저 임시 저장이 아니며 새로고침하면 사라진다.
@@ -35,4 +44,5 @@
 ```powershell
 node --import tsx --test scripts/test-workspace-save-client.ts
 node --import tsx --test scripts/test-workspace-editing.ts
+node --import tsx --test scripts/test-app-origins.ts
 ```

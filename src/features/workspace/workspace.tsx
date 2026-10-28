@@ -12,6 +12,12 @@ import TextNodeView from "./text-node-view";
 import WorkspaceToolbar from "./workspace-toolbar";
 import { expandLegacyCanvas } from "./create-workspace";
 import {
+  CONNECTION_SIDES,
+  getConnectionKey,
+  getConnectionPath,
+  getConnectionPoint,
+} from "./connections";
+import {
   createWorkspaceHistory,
   workspaceHistoryReducer,
 } from "./workspace-history";
@@ -23,6 +29,9 @@ import {
 
 import type {
   Camera,
+  ConnectionEndpoint,
+  ConnectionSide,
+  NodeConnection,
   Point,
   TextNode,
   TextNodeContentPatch,
@@ -69,9 +78,21 @@ type Gesture =
       initialSelection: string[];
       additive: boolean;
       moved: boolean;
+    }
+  | {
+      kind: "connect";
+      pointerId: number;
+      startPointer: Point;
+      source: ConnectionEndpoint;
     };
 
 type SelectionRect = Point & { width: number; height: number };
+type ConnectionDraft = {
+  source: ConnectionEndpoint;
+  pointer: Point;
+  hoveredNodeId: string | null;
+  target: ConnectionEndpoint | null;
+};
 
 const iconButtonClassName =
   "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded border border-neutral-300 hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-500 disabled:cursor-not-allowed disabled:opacity-40";
@@ -128,6 +149,8 @@ export default function Workspace({
   }, [hasUnsavedChanges]);
 
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
+  const [connectionDraft, setConnectionDraft] =
+    useState<ConnectionDraft | null>(null);
   const [selectionRect, setSelectionRect] = useState<SelectionRect | null>(
     null,
   );
@@ -173,6 +196,7 @@ export default function Workspace({
     gestureRef.current = null;
     setIsPanning(false);
     setSelectionRect(null);
+    setConnectionDraft(null);
 
     if (gesture?.kind === "node" || gesture?.kind === "resize") {
       dispatchHistory({ type: "commit" });
@@ -382,7 +406,7 @@ export default function Workspace({
           dispatchHistory({ type: "cancel" });
         } else if (gesture.kind === "marquee") {
           setSelectedNodeIds(gesture.initialSelection);
-        } else {
+        } else if (gesture.kind === "pan") {
           setCamera((current) => ({ ...current, ...gesture.startCamera }));
         }
         clearGesture();
@@ -494,6 +518,67 @@ export default function Workspace({
     setSelectedNodeIds([node.id]);
   }
 
+  function getCanvasPoint(clientX: number, clientY: number): Point | null {
+    const viewport = viewportRef.current;
+    if (!viewport) return null;
+    const rect = viewport.getBoundingClientRect();
+    return {
+      x: (clientX - rect.left - camera.x) / camera.zoom,
+      y: (clientY - rect.top - camera.y) / camera.zoom,
+    };
+  }
+
+  function getConnectionHover(
+    clientX: number,
+    clientY: number,
+    sourceNodeId: string,
+  ): { hoveredNodeId: string | null; target: ConnectionEndpoint | null } {
+    // 포인터를 뷰포트가 캡처하므로 event.target 대신 실제 커서 아래 요소를 확인한다.
+    const element = document.elementFromPoint(clientX, clientY);
+    const nodeElement = element?.closest<HTMLElement>("[data-node-id]");
+    const nodeId = nodeElement?.dataset.nodeId ?? null;
+    const side = element?.closest<HTMLElement>("[data-connection-side]")
+      ?.dataset.connectionSide as ConnectionSide | undefined;
+    return {
+      hoveredNodeId: nodeId,
+      target:
+        nodeId &&
+        nodeId !== sourceNodeId &&
+        side &&
+        CONNECTION_SIDES.includes(side)
+          ? { nodeId, side }
+          : null,
+    };
+  }
+
+  function startNodeConnection(
+    event: ReactPointerEvent<HTMLButtonElement>,
+    node: TextNode,
+    side: ConnectionSide,
+  ) {
+    const viewport = viewportRef.current;
+    if (event.button !== 0 || gestureRef.current || !viewport) return;
+    event.preventDefault();
+    event.stopPropagation();
+    viewport.focus({ preventScroll: true });
+    viewport.setPointerCapture(event.pointerId);
+
+    const source: ConnectionEndpoint = { nodeId: node.id, side };
+    gestureRef.current = {
+      kind: "connect",
+      pointerId: event.pointerId,
+      startPointer: { x: event.clientX, y: event.clientY },
+      source,
+    };
+    setConnectionDraft({
+      source,
+      pointer: getConnectionPoint(node, side),
+      hoveredNodeId: node.id,
+      target: null,
+    });
+    setSelectedNodeIds([node.id]);
+  }
+
   function moveGesture(event: ReactPointerEvent<HTMLDivElement>) {
     const gesture = gestureRef.current;
 
@@ -516,6 +601,19 @@ export default function Workspace({
         y: gesture.startCamera.y + deltaY,
       }));
 
+      return;
+    }
+
+    if (gesture.kind === "connect") {
+      const pointer = getCanvasPoint(event.clientX, event.clientY);
+      if (!pointer) return;
+      const hover = getConnectionHover(
+        event.clientX,
+        event.clientY,
+        gesture.source.nodeId,
+      );
+      
+      setConnectionDraft({ source: gesture.source, pointer, ...hover });
       return;
     }
 
@@ -627,6 +725,38 @@ export default function Workspace({
 
     if (!gesture || gesture.pointerId !== event.pointerId) return;
 
+    // 취소나 포인터 캡처 해제에서는 연결을 만들지 않는다.
+    if (gesture.kind === "connect" && event.type === "pointerup") {
+      const { target } = getConnectionHover(
+        event.clientX,
+        event.clientY,
+        gesture.source.nodeId,
+      );
+      if (target) {
+        const connection: NodeConnection = {
+          id: uuidv4(),
+          source: gesture.source,
+          target,
+        };
+        setWorkspace((current) => {
+          const nodeIds = new Set(current.nodes.map((node) => node.id));
+          const key = getConnectionKey(connection);
+          if (
+            !nodeIds.has(connection.source.nodeId) ||
+            !nodeIds.has(connection.target.nodeId) ||
+            current.connections.some(
+              (existing) => getConnectionKey(existing) === key,
+            )
+          )
+            return current;
+          return {
+            ...current,
+            connections: [...current.connections, connection],
+          };
+        });
+      }
+    }
+
     clearGesture();
   }
   function addTextNode() {
@@ -703,6 +833,11 @@ export default function Workspace({
     setWorkspace((current) => ({
       ...current,
       nodes: current.nodes.filter((node) => !selectedNodeIds.includes(node.id)),
+      connections: current.connections.filter(
+        (connection) =>
+          !selectedNodeIds.includes(connection.source.nodeId) &&
+          !selectedNodeIds.includes(connection.target.nodeId),
+      ),
     }));
 
     setSelectedNodeIds([]);
@@ -771,6 +906,11 @@ export default function Workspace({
       setIsSaving(false);
     }
   }
+
+  const nodesById = new Map(workspace.nodes.map((node) => [node.id, node]));
+  const draftSourceNode = connectionDraft
+    ? nodesById.get(connectionDraft.source.nodeId)
+    : undefined;
 
   return (
     <main
@@ -926,7 +1066,11 @@ export default function Workspace({
           tabIndex={-1}
           className="relative min-h-0 flex-1 overflow-hidden outline-none"
           style={{
-            cursor: isPanning ? "grabbing" : "default",
+            cursor: isPanning
+              ? "grabbing"
+              : connectionDraft
+                ? "crosshair"
+                : "default",
           }}
           aria-label="작업 공간 뷰포트"
           onPointerDownCapture={startPan}
@@ -948,6 +1092,50 @@ export default function Workspace({
               transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.zoom})`,
             }}
           >
+            <svg
+              aria-hidden="true"
+              className="pointer-events-none absolute top-0 left-0 overflow-visible"
+              width={workspace.canvas.width}
+              height={workspace.canvas.height}
+              fill="none"
+              stroke="#8b5cf6"
+              strokeWidth={2}
+            >
+              {workspace.connections.map((connection) => {
+                const source = nodesById.get(connection.source.nodeId);
+                const target = nodesById.get(connection.target.nodeId);
+                if (!source || !target) return null;
+                return (
+                  <path
+                    key={connection.id}
+                    data-connection-id={connection.id}
+                    d={getConnectionPath(
+                      getConnectionPoint(source, connection.source.side),
+                      getConnectionPoint(target, connection.target.side),
+                      connection.source.side,
+                      connection.target.side,
+                    )}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                );
+              })}
+              {connectionDraft && draftSourceNode && (
+                <path
+                  data-connection-preview=""
+                  d={getConnectionPath(
+                    getConnectionPoint(
+                      draftSourceNode,
+                      connectionDraft.source.side,
+                    ),
+                    connectionDraft.pointer,
+                    connectionDraft.source.side,
+                    connectionDraft.target?.side,
+                  )}
+                  strokeDasharray="5 4"
+                  vectorEffect="non-scaling-stroke"
+                />
+              )}
+            </svg>
             {workspace.nodes.length === 0 && (
               <div className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-neutral-400">
                 빈 작업 공간
@@ -959,6 +1147,19 @@ export default function Workspace({
                 key={node.id}
                 node={node}
                 selected={selectedNodeIds.includes(node.id)}
+                zoom={camera.zoom}
+                showPorts={
+                  connectionDraft?.source.nodeId === node.id ||
+                  connectionDraft?.hoveredNodeId === node.id
+                }
+                activePort={
+                  connectionDraft?.source.nodeId === node.id
+                    ? connectionDraft.source.side
+                    : connectionDraft?.target?.nodeId === node.id
+                      ? connectionDraft.target.side
+                      : null
+                }
+                onConnectStart={startNodeConnection}
                 onSelect={selectNode}
                 onDragStart={startNodeDrag}
                 onResizeStart={startNodeResize}

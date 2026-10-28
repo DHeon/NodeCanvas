@@ -22,6 +22,19 @@ export type TextNode = {
   text: string;
 };
 
+export type ConnectionSide = "top" | "right" | "bottom" | "left";
+
+export type ConnectionEndpoint = {
+  nodeId: string;
+  side: ConnectionSide;
+};
+
+export type NodeConnection = {
+  id: string;
+  source: ConnectionEndpoint;
+  target: ConnectionEndpoint;
+};
+
 //캔버스 데이터
 export type WorkspaceDocument = {
   canvas: {
@@ -29,9 +42,8 @@ export type WorkspaceDocument = {
     height: number;
   };
   nodes: TextNode[];
+  connections: NodeConnection[];
 };
 
 //텍스트 노드 수정용
-export type TextNodeContentPatch = Partial<
-  Pick<TextNode, "title" | "text">
->;
+export type TextNodeContentPatch = Partial<Pick<TextNode, "title" | "text">>;
