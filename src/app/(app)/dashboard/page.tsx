@@ -24,16 +24,16 @@ export default async function DashboardPage() {
     },
   });
   return (
-    <main className="min-h-screen bg-neutral-950 p-10">
+    <main className="min-h-screen bg-[#f8f9f4] p-6 text-neutral-900 [color-scheme:light] sm:p-10">
       <div className="mx-auto w-full max-w-7xl">
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-semibold text-white">내 프로젝트</h1>
-            <p className="mt-2 text-sm text-neutral-400">
+            <h1 className="text-3xl font-semibold">내 프로젝트</h1>
+            <p className="mt-2 text-sm text-neutral-500">
               {session.user.name} · {session.user.email}
             </p>
           </div>
-          <div className="text-white">
+          <div>
             <LogoutButton />
           </div>
         </header>
@@ -41,7 +41,7 @@ export default async function DashboardPage() {
 
         <section className="mt-10">
           {projects.length === 0 ? (
-            <p className="text-neutral-400">아직 생성된 프로젝트가 없습니다.</p>
+            <p className="text-neutral-500">아직 생성된 프로젝트가 없습니다.</p>
           ) : (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,220px))] gap-5">
               {projects.map((project) => (
@@ -53,7 +53,7 @@ export default async function DashboardPage() {
                     <Link
                       href={`/projects/${project.id}`}
                       aria-label={`${project.title} 열기`}
-                      className="flex items-center justify-center bg-neutral-200 text-sm text-neutral-400"
+                      className="flex items-center justify-center bg-[#eef0e8] text-sm text-neutral-500 transition-colors hover:bg-[#e6e9de]"
                     >
                       이미지
                     </Link>

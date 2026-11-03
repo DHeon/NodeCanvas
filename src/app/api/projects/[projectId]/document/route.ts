@@ -165,6 +165,43 @@ export async function PUT(request: Request, { params }: DocumentRouteContext) {
 
     const { document, expectedVersion } = result.data;
 
+    const imageNodes = document.nodes.filter(
+      (node) => node.type === "image_node",
+    );
+    const imageIds = [
+      ...new Set(
+        imageNodes.flatMap((node) => (node.image ? [node.image.id] : [])),
+      ),
+    ];
+    if (imageIds.length) {
+      const assets = await prisma.imageAsset.findMany({
+        where: {
+          id: { in: imageIds },
+          projectId: idResult.data,
+          project: { ownerId: session.user.id },
+        },
+        select: { id: true, width: true, height: true, byteLength: true },
+      });
+      const byId = new Map(assets.map((asset) => [asset.id, asset]));
+      if (
+        imageNodes.some((node) => {
+          const image = node.image;
+          if (!image) return false;
+          const asset = byId.get(image.id);
+          return (
+            !asset ||
+            asset.width !== image.width ||
+            asset.height !== image.height ||
+            asset.byteLength !== image.byteLength
+          );
+        })
+      )
+        return Response.json(
+          { message: "프로젝트에 속하지 않거나 올바르지 않은 이미지입니다." },
+          { status: 400 },
+        );
+    }
+
     const saved = await prisma.project.updateMany({
       //실제 저장
       where: {

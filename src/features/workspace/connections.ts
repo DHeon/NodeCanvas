@@ -1,4 +1,13 @@
-import type { ConnectionSide, NodeConnection, Point, TextNode } from "./types";
+import type {
+  ConnectionEndpoint,
+  ConnectionSide,
+  NodeConnection,
+  Point,
+  WorkspaceNode,
+} from "./types";
+
+export const CONNECTION_SNAP_RADIUS = 18; // 화면 기준 px
+export const MAX_CONNECTIONS = 3000;
 
 export const CONNECTION_SIDES: ConnectionSide[] = [
   "top",
@@ -15,7 +24,7 @@ const directions: Record<ConnectionSide, Point> = {
 };
 
 export function getConnectionPoint(
-  node: TextNode,
+  node: WorkspaceNode,
   side: ConnectionSide,
 ): Point {
   const { x, y } = node.position;
@@ -56,4 +65,45 @@ export function getConnectionKey(
   ]
     .sort()
     .join("|");
+}
+
+// 캔버스 거리 × 확대율 = 화면 거리. 확대율에 관계없이 같은 범위에서 붙는다.
+export function findConnectionTarget(
+  nodes: WorkspaceNode[],
+  connections: NodeConnection[],
+  source: ConnectionEndpoint,
+  pointer: Point,
+  zoom: number,
+  hoveredNodeId: string | null = null,
+): ConnectionEndpoint | null {
+  if (
+    zoom <= 0 ||
+    !Number.isFinite(zoom) ||
+    connections.length >= MAX_CONNECTIONS
+  )
+    return null;
+
+  const existingKeys = new Set(connections.map(getConnectionKey));
+  let nearest: ConnectionEndpoint | null = null;
+  let nearestDistance = CONNECTION_SNAP_RADIUS;
+  for (const node of nodes) {
+    // 노드 위에서는 그 노드의 점만 찾는다. 뒤에 겹친 노드로 연결하지 않는다.
+    if (
+      node.id === source.nodeId ||
+      (hoveredNodeId && node.id !== hoveredNodeId)
+    )
+      continue;
+    for (const side of CONNECTION_SIDES) {
+      const target = { nodeId: node.id, side };
+      if (existingKeys.has(getConnectionKey({ source, target }))) continue;
+      const point = getConnectionPoint(node, side);
+      const distance =
+        Math.hypot(point.x - pointer.x, point.y - pointer.y) * zoom;
+      if (distance <= nearestDistance) {
+        nearest = target;
+        nearestDistance = distance;
+      }
+    }
+  }
+  return nearest;
 }

@@ -70,7 +70,7 @@ export default function SignupForm() {
 
         <Link
           href="/login"
-          className="inline-block rounded-md bg-black px-4 py-2 text-white hover:bg-neutral-800"
+          className="inline-block rounded-lg bg-[#30382d] px-4 py-2 text-white hover:bg-[#434e3f]"
         >
           로그인으로 이동
         </Link>
@@ -79,7 +79,7 @@ export default function SignupForm() {
   }
 
   const inputClassName =
-    "mb-5 block w-full rounded-xl border border-neutral-700 px-3 py-2";
+    "mb-5 block w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200";
 
   return (
     <form onSubmit={handleSubmit} noValidate className="w-full">
@@ -143,7 +143,7 @@ export default function SignupForm() {
         )}
 
         <button
-          className="rounded-md bg-black px-4 py-2 text-white hover:bg-neutral-800 disabled:cursor-wait"
+          className="rounded-lg bg-[#30382d] px-4 py-2 text-white hover:bg-[#434e3f] disabled:cursor-wait"
           type="submit"
         >
           {isSubmitting ? "등록 중…" : "등록"}

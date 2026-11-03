@@ -50,7 +50,7 @@ export default function LoginForm({ destination }: { destination: string }) {
   }
 
   const inputClass =
-    "mb-5 block w-full rounded-xl border border-neutral-700 px-3 py-2";
+    "mb-5 block w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200";
   return (
     <form onSubmit={handleSubmit} noValidate className="w-full">
       <fieldset disabled={isSubmitting} className="disabled:opacity-60">
@@ -85,13 +85,13 @@ export default function LoginForm({ destination }: { destination: string }) {
         )}
         <button
           type="submit"
-          className="rounded-md bg-black px-4 py-2 text-white hover:bg-neutral-800 disabled:cursor-wait"
+          className="rounded-lg bg-[#30382d] px-4 py-2 text-white hover:bg-[#434e3f] disabled:cursor-wait"
         >
           {isSubmitting ? "로그인 중…" : "로그인"}
         </button>
         <Link
           href="/signup"
-          className="ml-4 text-sm underline underline-offset-4"
+          className="ml-4 text-sm text-neutral-600 underline underline-offset-4 hover:text-neutral-900"
         >
           회원가입
         </Link>

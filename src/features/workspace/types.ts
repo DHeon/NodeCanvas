@@ -11,16 +11,36 @@ export type Camera = {
   zoom: number;
 };
 
-//텍스트 노드 데이터들
-export type TextNode = {
+export type NodeBase = {
   id: string;
-  type: "text_node";
   position: Point;
   width: number;
   height: number;
   title: string;
+};
+
+// 노드 종류별 내용만 나누고 좌표·크기·연결 동작은 공유한다.
+export type TextNode = NodeBase & {
+  type: "text_node";
   text: string;
 };
+
+export type ImageReference = {
+  id: string;
+  width: number;
+  height: number;
+  byteLength: number;
+};
+
+export type ImageNode = NodeBase & {
+  type: "image_node";
+  image: ImageReference | null;
+};
+
+export type WorkspaceNode = TextNode | ImageNode;
+export type NodeTransformPatch = Partial<
+  Point & { width: number; height: number }
+>;
 
 export type ConnectionSide = "top" | "right" | "bottom" | "left";
 
@@ -35,13 +55,21 @@ export type NodeConnection = {
   target: ConnectionEndpoint;
 };
 
+// 드래그 중에만 사용하는 미리보기. 저장되는 문서에는 포함하지 않는다.
+export type ConnectionDraft = {
+  source: ConnectionEndpoint;
+  pointer: Point;
+  hoveredNodeId: string | null;
+  target: ConnectionEndpoint | null;
+};
+
 //캔버스 데이터
 export type WorkspaceDocument = {
   canvas: {
     width: number;
     height: number;
   };
-  nodes: TextNode[];
+  nodes: WorkspaceNode[];
   connections: NodeConnection[];
 };
 

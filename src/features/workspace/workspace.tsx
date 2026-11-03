@@ -7,15 +7,21 @@ import { v4 as uuidv4 } from "uuid";
 import type {
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
+  ClipboardEvent as ReactClipboardEvent,
 } from "react";
 import TextNodeView from "./text-node-view";
+import ImageNodeView from "./image-node-view";
+import WorkspaceInspector from "./workspace-inspector";
+import useImageUploads from "./use-image-uploads";
+import { fitNodeSize, replaceNodeImage, transformNode } from "./node-transform";
 import WorkspaceToolbar from "./workspace-toolbar";
+import ConnectionLayer from "./connection-layer";
 import { expandLegacyCanvas } from "./create-workspace";
 import {
-  CONNECTION_SIDES,
+  findConnectionTarget,
   getConnectionKey,
-  getConnectionPath,
   getConnectionPoint,
+  MAX_CONNECTIONS,
 } from "./connections";
 import {
   createWorkspaceHistory,
@@ -30,10 +36,13 @@ import {
 import type {
   Camera,
   ConnectionEndpoint,
+  ConnectionDraft,
   ConnectionSide,
   NodeConnection,
   Point,
-  TextNode,
+  WorkspaceNode,
+  ImageReference,
+  NodeTransformPatch,
   TextNodeContentPatch,
   WorkspaceDocument,
 } from "./types";
@@ -87,13 +96,6 @@ type Gesture =
     };
 
 type SelectionRect = Point & { width: number; height: number };
-type ConnectionDraft = {
-  source: ConnectionEndpoint;
-  pointer: Point;
-  hoveredNodeId: string | null;
-  target: ConnectionEndpoint | null;
-};
-
 const iconButtonClassName =
   "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded border border-neutral-300 hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-500 disabled:cursor-not-allowed disabled:opacity-40";
 
@@ -125,6 +127,13 @@ export default function Workspace({
   const viewportRef = useRef<HTMLDivElement>(null); // DOM관련 크기 측정, 이벤트 연결할 때
   const gestureRef = useRef<Gesture | null>(null); //드래그 시작 시 위치와 어떤거 이동할지
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageTargetRef = useRef<string | null>(null);
+  const pendingImagesRef = useRef<{ nodeId: string; image: ImageReference }[]>(
+    [],
+  );
+  const [inspectorOpen, setInspectorOpen] = useState(true);
+
   const [savedDocument, setSavedDocument] = useState(initialDocument);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
@@ -149,6 +158,9 @@ export default function Workspace({
   }, [hasUnsavedChanges]);
 
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
+  const [selectedConnectionId, setSelectedConnectionId] = useState<
+    string | null
+  >(null);
   const [connectionDraft, setConnectionDraft] =
     useState<ConnectionDraft | null>(null);
   const [selectionRect, setSelectionRect] = useState<SelectionRect | null>(
@@ -202,10 +214,29 @@ export default function Workspace({
       dispatchHistory({ type: "commit" });
     }
 
+    for (const { nodeId, image } of pendingImagesRef.current) {
+      dispatchHistory({
+        type: "change",
+        update: (document) => replaceNodeImage(document, nodeId, image),
+      });
+    }
+    pendingImagesRef.current = [];
+
     if (gesture && viewport?.hasPointerCapture(gesture.pointerId)) {
       viewport.releasePointerCapture(gesture.pointerId);
     }
   }, []);
+
+  const imageUploads = useImageUploads(projectId, (nodeId, image) => {
+    if (gestureRef.current) {
+      pendingImagesRef.current.push({ nodeId, image });
+      return;
+    }
+    dispatchHistory({ type: "commit" });
+    setWorkspace((current) => replaceNodeImage(current, nodeId, image));
+    if (document.activeElement?.matches("input, textarea"))
+      dispatchHistory({ type: "begin" });
+  });
 
   useEffect(() => {
     window.addEventListener("blur", clearGesture);
@@ -320,6 +351,7 @@ export default function Workspace({
 
   function selectNode(nodeId: string, additive = false) {
     if (gestureRef.current) return;
+    setSelectedConnectionId(null);
 
     setSelectedNodeIds((current) => {
       if (!additive) {
@@ -334,6 +366,19 @@ export default function Workspace({
     });
   }
 
+  function selectConnection(connectionId: string) {
+    if (gestureRef.current) return;
+    if (
+      !workspace.connections.some(
+        (connection) => connection.id === connectionId,
+      )
+    )
+      return;
+    viewportRef.current?.focus({ preventScroll: true });
+    setSelectedNodeIds([]);
+    setSelectedConnectionId(connectionId);
+  }
+
   function startMarquee(event: ReactPointerEvent<HTMLDivElement>) {
     const viewport = viewportRef.current;
     if (
@@ -341,12 +386,13 @@ export default function Workspace({
       gestureRef.current ||
       !viewport ||
       !(event.target instanceof Element) ||
-      event.target.closest("[data-node-id]")
+      event.target.closest("[data-node-id], [data-connection-hit]")
     ) {
       return;
     }
 
     event.preventDefault();
+    setSelectedConnectionId(null);
     const rect = viewport.getBoundingClientRect();
     viewport.focus({ preventScroll: true });
     viewport.setPointerCapture(event.pointerId);
@@ -377,14 +423,18 @@ export default function Workspace({
 
   function undo() {
     if (gestureRef.current) return;
+    viewportRef.current?.focus({ preventScroll: true });
     dispatchHistory({ type: "undo" });
     setSelectedNodeIds([]);
+    setSelectedConnectionId(null);
   }
 
   function redo() {
     if (gestureRef.current) return;
+    viewportRef.current?.focus({ preventScroll: true });
     dispatchHistory({ type: "redo" });
     setSelectedNodeIds([]);
+    setSelectedConnectionId(null);
   }
 
   function handleWorkspaceKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
@@ -412,6 +462,7 @@ export default function Workspace({
         clearGesture();
       } else {
         setSelectedNodeIds([]);
+        setSelectedConnectionId(null);
       }
       event.preventDefault();
       return;
@@ -432,13 +483,13 @@ export default function Workspace({
 
     if (event.key === "Delete" || event.key === "Backspace") {
       event.preventDefault();
-      deleteSelectedNodes();
+      deleteSelection();
     }
   }
 
   function startNodeDrag(
     event: ReactPointerEvent<HTMLButtonElement>,
-    node: TextNode,
+    node: WorkspaceNode,
   ) {
     const viewport = viewportRef.current;
 
@@ -485,11 +536,12 @@ export default function Workspace({
     };
 
     setSelectedNodeIds(draggedNodes.map((item) => item.id));
+    setSelectedConnectionId(null);
   }
 
   function startNodeResize(
     event: ReactPointerEvent<HTMLButtonElement>,
-    node: TextNode,
+    node: WorkspaceNode,
   ) {
     const viewport = viewportRef.current;
 
@@ -516,6 +568,7 @@ export default function Workspace({
     };
 
     setSelectedNodeIds([node.id]);
+    setSelectedConnectionId(null);
   }
 
   function getCanvasPoint(clientX: number, clientY: number): Point | null {
@@ -531,33 +584,42 @@ export default function Workspace({
   function getConnectionHover(
     clientX: number,
     clientY: number,
-    sourceNodeId: string,
+    source: ConnectionEndpoint,
   ): { hoveredNodeId: string | null; target: ConnectionEndpoint | null } {
     // 포인터를 뷰포트가 캡처하므로 event.target 대신 실제 커서 아래 요소를 확인한다.
     const element = document.elementFromPoint(clientX, clientY);
     const nodeElement = element?.closest<HTMLElement>("[data-node-id]");
     const nodeId = nodeElement?.dataset.nodeId ?? null;
-    const side = element?.closest<HTMLElement>("[data-connection-side]")
-      ?.dataset.connectionSide as ConnectionSide | undefined;
+    const pointer = getCanvasPoint(clientX, clientY);
+    const target = pointer
+      ? findConnectionTarget(
+          workspace.nodes,
+          workspace.connections,
+          source,
+          pointer,
+          camera.zoom,
+          nodeId,
+        )
+      : null;
     return {
-      hoveredNodeId: nodeId,
-      target:
-        nodeId &&
-        nodeId !== sourceNodeId &&
-        side &&
-        CONNECTION_SIDES.includes(side)
-          ? { nodeId, side }
-          : null,
+      hoveredNodeId: target?.nodeId ?? nodeId,
+      target,
     };
   }
 
   function startNodeConnection(
     event: ReactPointerEvent<HTMLButtonElement>,
-    node: TextNode,
+    node: WorkspaceNode,
     side: ConnectionSide,
   ) {
     const viewport = viewportRef.current;
-    if (event.button !== 0 || gestureRef.current || !viewport) return;
+    if (
+      event.button !== 0 ||
+      gestureRef.current ||
+      !viewport ||
+      workspace.connections.length >= MAX_CONNECTIONS
+    )
+      return;
     event.preventDefault();
     event.stopPropagation();
     viewport.focus({ preventScroll: true });
@@ -577,6 +639,7 @@ export default function Workspace({
       target: null,
     });
     setSelectedNodeIds([node.id]);
+    setSelectedConnectionId(null);
   }
 
   function moveGesture(event: ReactPointerEvent<HTMLDivElement>) {
@@ -610,10 +673,19 @@ export default function Workspace({
       const hover = getConnectionHover(
         event.clientX,
         event.clientY,
-        gesture.source.nodeId,
+        gesture.source,
       );
-      
-      setConnectionDraft({ source: gesture.source, pointer, ...hover });
+      const targetNode = hover.target
+        ? workspace.nodes.find((node) => node.id === hover.target?.nodeId)
+        : undefined;
+      setConnectionDraft({
+        source: gesture.source,
+        pointer:
+          targetNode && hover.target
+            ? getConnectionPoint(targetNode, hover.target.side)
+            : pointer,
+        ...hover,
+      });
       return;
     }
 
@@ -658,16 +730,19 @@ export default function Workspace({
         const nodes = current.nodes.map((node) => {
           if (node.id !== gesture.nodeId) return node;
 
-          // 노드의 오른쪽·아래쪽이 캔버스를 넘지 않도록 제한한다.
-          const maxWidth = current.canvas.width - node.position.x;
-          const maxHeight = current.canvas.height - node.position.y;
-
-          // 최소 크기. 남은 캔버스 공간이 더 작으면 그 공간을 우선한다.
-          const minWidth = Math.min(200, maxWidth);
-          const minHeight = Math.min(140, maxHeight);
-
-          const width = Math.max(minWidth, Math.min(nextWidth, maxWidth));
-          const height = Math.max(minHeight, Math.min(nextHeight, maxHeight));
+          const ratio =
+            node.type === "image_node" && node.image
+              ? node.image.width / node.image.height
+              : 1;
+          const axis =
+            Math.abs(deltaX) >= Math.abs(deltaY) * ratio ? "width" : "height";
+          const { width, height } = fitNodeSize(
+            node,
+            current.canvas,
+            nextWidth,
+            nextHeight,
+            axis,
+          );
 
           if (width === node.width && height === node.height) return node;
 
@@ -730,7 +805,7 @@ export default function Workspace({
       const { target } = getConnectionHover(
         event.clientX,
         event.clientY,
-        gesture.source.nodeId,
+        gesture.source,
       );
       if (target) {
         const connection: NodeConnection = {
@@ -744,6 +819,7 @@ export default function Workspace({
           if (
             !nodeIds.has(connection.source.nodeId) ||
             !nodeIds.has(connection.target.nodeId) ||
+            current.connections.length >= MAX_CONNECTIONS ||
             current.connections.some(
               (existing) => getConnectionKey(existing) === key,
             )
@@ -759,54 +835,88 @@ export default function Workspace({
 
     clearGesture();
   }
-  function addTextNode() {
+  function addNode(type: WorkspaceNode["type"]) {
     const viewport = viewportRef.current;
-
-    if (!viewport || gestureRef.current) return;
-
+    if (!viewport || gestureRef.current || workspace.nodes.length >= 1000)
+      return null;
     const rect = viewport.getBoundingClientRect();
-
-    const width = 320;
-    const height = 220;
-
-    // 현재 화면 중앙 캔버스 좌표 구하기
+    const width = Math.min(
+      type === "image_node" ? 360 : 320,
+      workspace.canvas.width,
+    );
+    const height = Math.min(
+      type === "image_node" ? 280 : 220,
+      workspace.canvas.height,
+    );
     const centerX = (rect.width / 2 - camera.x) / camera.zoom;
     const centerY = (rect.height / 2 - camera.y) / camera.zoom;
-
-    // 여러개 생성할때 오프셋 주기
     const offset = (workspace.nodes.length % 6) * 24;
-
     const x = Math.max(
       0,
       Math.min(centerX - width / 2 + offset, workspace.canvas.width - width),
     );
-
     const y = Math.max(
       0,
       Math.min(centerY - height / 2 + offset, workspace.canvas.height - height),
     );
-
-    const node: TextNode = {
-      id: uuidv4(),
-      type: "text_node",
-      position: { x, y },
-      width,
-      height,
-      title: "",
-      text: "",
-    };
-
+    const base = { id: uuidv4(), position: { x, y }, width, height, title: "" };
+    const node: WorkspaceNode =
+      type === "image_node"
+        ? { ...base, type, image: null }
+        : { ...base, type, text: "" };
     setWorkspace((current) => ({
       ...current,
       nodes: [...current.nodes, node],
     }));
     setSelectedNodeIds([node.id]);
-    // 캔버스 밖을 보고 있었더라도 새 노드를 볼 수 있게 한다.
+    setSelectedConnectionId(null);
     setCamera((current) => ({
       ...current,
       x: rect.width / 2 - (x + width / 2) * current.zoom,
       y: rect.height / 2 - (y + height / 2) * current.zoom,
     }));
+    return node.id;
+  }
+
+  function addTextNode() {
+    addNode("text_node");
+  }
+
+  function chooseImage(nodeId: string) {
+    imageTargetRef.current = nodeId;
+    fileInputRef.current?.click();
+  }
+
+  function handlePaste(event: ReactClipboardEvent<HTMLElement>) {
+    if (
+      gestureRef.current ||
+      (event.target instanceof Element &&
+        event.target.closest("input, textarea, [contenteditable='true']"))
+    )
+      return;
+    const file = Array.from(event.clipboardData.files).find((file) =>
+      file.type.startsWith("image/"),
+    );
+    if (!file) return;
+    event.preventDefault();
+    const selected =
+      selectedNodeIds.length === 1
+        ? workspace.nodes.find((node) => node.id === selectedNodeIds[0])
+        : undefined;
+    const nodeId =
+      selected?.type === "image_node" ? selected.id : addNode("image_node");
+    if (nodeId) void imageUploads.upload(nodeId, file);
+  }
+
+  function updateNodeTransform(nodeId: string, patch: NodeTransformPatch) {
+    if (!gestureRef.current)
+      setWorkspace((current) => transformNode(current, nodeId, patch));
+  }
+
+  function removeNodeImage(nodeId: string) {
+    if (gestureRef.current) return;
+    dispatchHistory({ type: "commit" });
+    setWorkspace((current) => replaceNodeImage(current, nodeId, null));
   }
 
   function updateTextNode(nodeId: string, patch: TextNodeContentPatch) {
@@ -814,33 +924,56 @@ export default function Workspace({
     setWorkspace((current) => {
       let changed = false;
       const nodes = current.nodes.map((node) => {
-        if (
-          node.id !== nodeId ||
-          ((patch.title === undefined || patch.title === node.title) &&
-            (patch.text === undefined || patch.text === node.text))
-        ) {
-          return node;
-        }
+        const titleChanged =
+          patch.title !== undefined && patch.title !== node.title;
+        const textChanged =
+          node.type === "text_node" &&
+          patch.text !== undefined &&
+          patch.text !== node.text;
+        if (node.id !== nodeId || (!titleChanged && !textChanged)) return node;
         changed = true;
-        return { ...node, ...patch };
+        return {
+          ...node,
+          ...(patch.title === undefined ? {} : { title: patch.title }),
+          ...(node.type === "text_node" && patch.text !== undefined
+            ? { text: patch.text }
+            : {}),
+        };
       });
       return changed ? { ...current, nodes } : current;
     });
   }
-  function deleteSelectedNodes() {
-    if (selectedNodeIds.length === 0 || gestureRef.current) return;
 
-    setWorkspace((current) => ({
-      ...current,
-      nodes: current.nodes.filter((node) => !selectedNodeIds.includes(node.id)),
-      connections: current.connections.filter(
+  function deleteSelection() {
+    if (
+      (!selectedNodeIds.length && !selectedConnectionId) ||
+      gestureRef.current
+    )
+      return;
+
+    // 버튼이 삭제 후 비활성화돼도 포커스가 body로 빠지지 않아 Ctrl+Z가 이어진다.
+    viewportRef.current?.focus({ preventScroll: true });
+
+    setWorkspace((current) => {
+      const nodes = selectedNodeIds.length
+        ? current.nodes.filter((node) => !selectedNodeIds.includes(node.id))
+        : current.nodes;
+      const connections = current.connections.filter(
         (connection) =>
+          connection.id !== selectedConnectionId &&
           !selectedNodeIds.includes(connection.source.nodeId) &&
           !selectedNodeIds.includes(connection.target.nodeId),
-      ),
-    }));
+      );
+      if (
+        nodes.length === current.nodes.length &&
+        connections.length === current.connections.length
+      )
+        return current;
+      return { ...current, nodes, connections };
+    });
 
     setSelectedNodeIds([]);
+    setSelectedConnectionId(null);
   }
 
   async function saveWorkspace() {
@@ -851,6 +984,10 @@ export default function Workspace({
       !hasUnsavedChanges
     )
       return;
+    if (imageUploads.isUploading) {
+      setSaveError("이미지 업로드가 끝난 뒤 저장해주세요.");
+      return;
+    }
     savingRef.current = true;
     setIsSaving(true);
     setSaveError("");
@@ -907,16 +1044,36 @@ export default function Workspace({
     }
   }
 
-  const nodesById = new Map(workspace.nodes.map((node) => [node.id, node]));
-  const draftSourceNode = connectionDraft
-    ? nodesById.get(connectionDraft.source.nodeId)
-    : undefined;
+  const selectedNode =
+    selectedNodeIds.length === 1
+      ? workspace.nodes.find((node) => node.id === selectedNodeIds[0])
+      : undefined;
+  const selectionCount =
+    selectedNodeIds.length + (selectedConnectionId ? 1 : 0);
+  const selectionDescription = selectedConnectionId
+    ? "선택한 연결선 삭제 (Delete / Backspace)"
+    : `선택한 노드 ${selectedNodeIds.length}개 삭제 (Delete / Backspace)`;
 
   return (
     <main
       className="fixed inset-0 flex flex-col bg-neutral-200 text-neutral-900"
       onKeyDown={handleWorkspaceKeyDown}
+      onPaste={handlePaste}
     >
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp,image/gif"
+        className="hidden"
+        aria-label="이미지 파일 선택"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          const nodeId = imageTargetRef.current;
+          event.target.value = "";
+          imageTargetRef.current = null;
+          if (nodeId && file) void imageUploads.upload(nodeId, file);
+        }}
+      />
       <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-3 border-b border-neutral-300 bg-white px-4 py-2">
         <Link
           href="/dashboard"
@@ -985,16 +1142,14 @@ export default function Workspace({
         </button>
         <button
           type="button"
-          onClick={deleteSelectedNodes}
-          disabled={selectedNodeIds.length === 0}
+          onClick={deleteSelection}
+          disabled={selectionCount === 0}
           aria-label={
-            selectedNodeIds.length > 0
-              ? `선택 삭제 (${selectedNodeIds.length}개)`
-              : "선택 삭제"
+            selectionCount > 0 ? `선택 삭제 (${selectionCount}개)` : "선택 삭제"
           }
           title={
-            selectedNodeIds.length > 0
-              ? `선택한 노드 ${selectedNodeIds.length}개 삭제 (Delete / Backspace)`
+            selectionCount > 0
+              ? selectionDescription
               : "선택 삭제 (Delete / Backspace)"
           }
           aria-keyshortcuts="Delete Backspace"
@@ -1021,7 +1176,12 @@ export default function Workspace({
         <button
           type="button"
           onClick={saveWorkspace}
-          disabled={isSaving || hasConflict || !hasUnsavedChanges}
+          disabled={
+            isSaving ||
+            imageUploads.isUploading ||
+            hasConflict ||
+            !hasUnsavedChanges
+          }
           className="shrink-0 rounded border border-neutral-300 px-3 py-1.5 text-sm hover:bg-neutral-100 disabled:cursor-wait disabled:opacity-50"
         >
           {isSaving ? "저장 중…" : "저장"}
@@ -1060,11 +1220,14 @@ export default function Workspace({
       </header>
       {/* 뷰포트  */}
       <div className="relative flex min-h-0 flex-1">
-        <WorkspaceToolbar onAddTextNode={addTextNode} />
+        <WorkspaceToolbar
+          onAddTextNode={addTextNode}
+          onAddImageNode={() => addNode("image_node")}
+        />
         <div
           ref={viewportRef}
           tabIndex={-1}
-          className="relative min-h-0 flex-1 overflow-hidden outline-none"
+          className="relative min-h-0 flex-1 overflow-clip outline-none"
           style={{
             cursor: isPanning
               ? "grabbing"
@@ -1092,82 +1255,56 @@ export default function Workspace({
               transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.zoom})`,
             }}
           >
-            <svg
-              aria-hidden="true"
-              className="pointer-events-none absolute top-0 left-0 overflow-visible"
-              width={workspace.canvas.width}
-              height={workspace.canvas.height}
-              fill="none"
-              stroke="#8b5cf6"
-              strokeWidth={2}
-            >
-              {workspace.connections.map((connection) => {
-                const source = nodesById.get(connection.source.nodeId);
-                const target = nodesById.get(connection.target.nodeId);
-                if (!source || !target) return null;
-                return (
-                  <path
-                    key={connection.id}
-                    data-connection-id={connection.id}
-                    d={getConnectionPath(
-                      getConnectionPoint(source, connection.source.side),
-                      getConnectionPoint(target, connection.target.side),
-                      connection.source.side,
-                      connection.target.side,
-                    )}
-                    vectorEffect="non-scaling-stroke"
-                  />
-                );
-              })}
-              {connectionDraft && draftSourceNode && (
-                <path
-                  data-connection-preview=""
-                  d={getConnectionPath(
-                    getConnectionPoint(
-                      draftSourceNode,
-                      connectionDraft.source.side,
-                    ),
-                    connectionDraft.pointer,
-                    connectionDraft.source.side,
-                    connectionDraft.target?.side,
-                  )}
-                  strokeDasharray="5 4"
-                  vectorEffect="non-scaling-stroke"
-                />
-              )}
-            </svg>
+            <ConnectionLayer
+              canvas={workspace.canvas}
+              nodes={workspace.nodes}
+              connections={workspace.connections}
+              draft={connectionDraft}
+              selectedConnectionId={selectedConnectionId}
+              zoom={camera.zoom}
+              onSelect={selectConnection}
+            />
             {workspace.nodes.length === 0 && (
               <div className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-neutral-400">
                 빈 작업 공간
               </div>
             )}
 
-            {workspace.nodes.map((node) => (
-              <TextNodeView
-                key={node.id}
-                node={node}
-                selected={selectedNodeIds.includes(node.id)}
-                zoom={camera.zoom}
-                showPorts={
+            {workspace.nodes.map((node) => {
+              const frame = {
+                selected: selectedNodeIds.includes(node.id),
+                zoom: camera.zoom,
+                showPorts:
                   connectionDraft?.source.nodeId === node.id ||
-                  connectionDraft?.hoveredNodeId === node.id
-                }
-                activePort={
+                  connectionDraft?.hoveredNodeId === node.id,
+                activePort:
                   connectionDraft?.source.nodeId === node.id
                     ? connectionDraft.source.side
                     : connectionDraft?.target?.nodeId === node.id
                       ? connectionDraft.target.side
-                      : null
-                }
-                onConnectStart={startNodeConnection}
-                onSelect={selectNode}
-                onDragStart={startNodeDrag}
-                onResizeStart={startNodeResize}
-                onChange={updateTextNode}
-                onEditStart={beginTextEdit}
-                onEditEnd={endTextEdit}
-              />
-            ))}
+                      : null,
+                onConnectStart: startNodeConnection,
+                onSelect: selectNode,
+                onDragStart: startNodeDrag,
+                onResizeStart: startNodeResize,
+                onChange: updateTextNode,
+                onEditStart: beginTextEdit,
+                onEditEnd: endTextEdit,
+              };
+              return node.type === "text_node" ? (
+                <TextNodeView key={node.id} {...frame} node={node} />
+              ) : (
+                <ImageNodeView
+                  key={node.id}
+                  {...frame}
+                  node={node}
+                  projectId={projectId}
+                  uploading={imageUploads.states[node.id]?.uploading ?? false}
+                  error={imageUploads.states[node.id]?.error ?? ""}
+                  onChooseImage={chooseImage}
+                />
+              );
+            })}
             {selectionRect && (
               <div
                 aria-hidden="true"
@@ -1183,6 +1320,27 @@ export default function Workspace({
             )}
           </div>
         </div>
+        <WorkspaceInspector
+          open={inspectorOpen}
+          node={selectedNode}
+          selectionCount={selectedNodeIds.length}
+          uploading={
+            selectedNode
+              ? (imageUploads.states[selectedNode.id]?.uploading ?? false)
+              : false
+          }
+          onToggle={() => setInspectorOpen((open) => !open)}
+          onChange={updateTextNode}
+          onTransform={updateNodeTransform}
+          onEditStart={beginTextEdit}
+          onEditEnd={endTextEdit}
+          onChooseImage={chooseImage}
+          onRemoveImage={removeNodeImage}
+          onDelete={deleteSelection}
+          onReturnToCanvas={() =>
+            viewportRef.current?.focus({ preventScroll: true })
+          }
+        />
       </div>
     </main>
   );

@@ -15,11 +15,18 @@ import type {
 } from "../src/features/workspace/types";
 import {
   CONNECTION_SIDES,
+  CONNECTION_SNAP_RADIUS,
+  MAX_CONNECTIONS,
+  findConnectionTarget,
   getConnectionKey,
   getConnectionPath,
   getConnectionPoint,
 } from "../src/features/workspace/connections";
 import { workspaceDocumentSchema } from "../src/features/workspace/workspace-schema";
+import {
+  fitNodeSize,
+  replaceNodeImage,
+} from "../src/features/workspace/node-transform";
 
 function fixture(): WorkspaceDocument {
   return {
@@ -173,6 +180,7 @@ const tree = ts.createSourceFile(
 );
 const names = [
   "selectNode",
+  "selectConnection",
   "startMarquee",
   "beginTextEdit",
   "endTextEdit",
@@ -184,7 +192,7 @@ const names = [
   "moveGesture",
   "endGesture",
   "updateTextNode",
-  "deleteSelectedNodes",
+  "deleteSelection",
   "getCanvasPoint",
   "getConnectionHover",
   "startNodeConnection",
@@ -226,7 +234,7 @@ class TestElement {
     if (selector === "[data-connection-side]") {
       return this.dataset.connectionSide ? this : null;
     }
-    return (selector === "[data-node-id]" ? this.node : this.editable)
+    return (selector.includes("[data-node-id]") ? this.node : this.editable)
       ? this
       : null;
   }
@@ -235,10 +243,12 @@ class TestElement {
 type TestState = {
   history: WorkspaceHistory;
   selected: string[];
+  selectedConnection: string | null;
   camera: { x: number; y: number; zoom: number };
   rect: unknown;
   panning: boolean;
   captured: boolean;
+  focusCount: number;
   draft: {
     source: ConnectionEndpoint;
     pointer: Point;
@@ -256,16 +266,22 @@ const factory = new Function(
   "Element",
   "document",
   "uuidv4",
-  "CONNECTION_SIDES",
+  "findConnectionTarget",
+  "MAX_CONNECTIONS",
   "getConnectionPoint",
   "getConnectionKey",
+  "fitNodeSize",
+  "replaceNodeImage",
   `
   const workspace = state.history.present;
   const selectedNodeIds = state.selected;
+  const selectedConnectionId = state.selectedConnection;
   const camera = state.camera;
+  const pendingImagesRef = { current: [] };
   const dispatchHistory = action => { state.history = workspaceHistoryReducer(state.history, action); };
   const setWorkspace = update => dispatchHistory({ type: "change", update });
   const setSelectedNodeIds = update => { state.selected = typeof update === "function" ? update(state.selected) : update; };
+  const setSelectedConnectionId = value => { state.selectedConnection = value; };
   const setCamera = update => { state.camera = update(state.camera); };
   const setSelectionRect = rect => { state.rect = rect; };
   const setConnectionDraft = draft => { state.draft = draft; };
@@ -279,16 +295,20 @@ function setup(selected: string[] = []) {
   const state: TestState = {
     history: createWorkspaceHistory(fixture()),
     selected,
+    selectedConnection: null,
     camera: { x: 10, y: 20, zoom: 0.5 },
     rect: null,
     panning: false,
     captured: false,
+    focusCount: 0,
     draft: null,
     hoveredElement: null,
   };
   const gestureRef: { current: unknown } = { current: null };
   const viewport = {
-    focus() {},
+    focus() {
+      state.focusCount++;
+    },
     getBoundingClientRect: () => ({
       left: 10,
       top: 20,
@@ -315,9 +335,12 @@ function setup(selected: string[] = []) {
         TestElement,
         { elementFromPoint: () => state.hoveredElement },
         randomUUID,
-        CONNECTION_SIDES,
+        findConnectionTarget,
+        MAX_CONNECTIONS,
         getConnectionPoint,
         getConnectionKey,
+        fitNodeSize,
+        replaceNodeImage,
       )[name](...args);
     },
   };
@@ -395,23 +418,26 @@ test("네 방향 연결점과 곡선은 노드의 현재 좌표·크기에서 �
   }
 });
 
-test("연결 미리보기는 커서 좌표를 유지하며 점 근처에서 스냅하지 않는다", () => {
+test("스냅 범위 밖에서는 커서 좌표를 유지하고 연결하지 않는다", () => {
   const h = setup();
   const document = h.state.history.present;
   h.call("startNodeConnection", pointer(), document.nodes[0], "right");
   h.state.hoveredElement = new TestElement(false, true, { nodeId: "b" });
-  h.call("moveGesture", pointer({ clientX: 322, clientY: 269 }));
-  assert.deepEqual(h.state.draft?.pointer, { x: 604, y: 458 });
+  h.call("moveGesture", pointer({ clientX: 290, clientY: 275 }));
+  assert.deepEqual(h.state.draft?.pointer, { x: 540, y: 470 });
   assert.equal(h.state.draft?.hoveredNodeId, "b");
   assert.equal(h.state.draft?.target, null);
   assert.equal(h.state.history.present, document);
-  h.call("endGesture", pointer({ type: "pointerup", buttons: 0 }));
+  h.call(
+    "endGesture",
+    pointer({ type: "pointerup", buttons: 0, clientX: 290, clientY: 275 }),
+  );
   assert.equal(h.state.history.present, document);
   assert.equal(h.state.history.past.length, 0);
   assert.equal(h.state.draft, null);
 });
 
-test("대상 점 위에서 놓을 때만 연결하고 한 단계로 실행 취소·복원한다", () => {
+test("점 근처에서 미리보기가 스냅되고 한 단계로 연결·실행 취소·복원한다", () => {
   const h = setup();
   const document = h.state.history.present;
   h.call("startNodeConnection", pointer(), document.nodes[0], "right");
@@ -419,10 +445,14 @@ test("대상 점 위에서 놓을 때만 연결하고 한 단계로 실행 취�
     nodeId: "b",
     connectionSide: "left",
   });
-  h.call("moveGesture", pointer({ clientX: 320, clientY: 275 }));
+  h.call("moveGesture", pointer({ clientX: 310, clientY: 269 }));
   assert.deepEqual(h.state.draft?.target, { nodeId: "b", side: "left" });
+  assert.deepEqual(h.state.draft?.pointer, { x: 600, y: 470 });
   assert.equal(h.state.history.present.connections.length, 0);
-  h.call("endGesture", pointer({ type: "pointerup", buttons: 0 }));
+  h.call(
+    "endGesture",
+    pointer({ type: "pointerup", buttons: 0, clientX: 310, clientY: 269 }),
+  );
   const [connection] = h.state.history.present.connections;
   assert.deepEqual(connection.source, { nodeId: "a", side: "right" });
   assert.deepEqual(connection.target, { nodeId: "b", side: "left" });
@@ -449,7 +479,11 @@ test("Escape·포인터 취소·캡처 해제·창 전환은 연결을 만들지
     });
     if (action === "Escape") h.call("handleWorkspaceKeyDown", key("Escape"));
     else if (action === "blur") h.call("clearGesture");
-    else h.call("endGesture", pointer({ type: action, buttons: 0 }));
+    else
+      h.call(
+        "endGesture",
+        pointer({ type: action, buttons: 0, clientX: 320, clientY: 275 }),
+      );
     assert.equal(h.state.history.present, document);
     assert.equal(h.state.history.past.length, 0);
     assert.equal(h.state.draft, null);
@@ -469,7 +503,10 @@ test("자기 노드와 연결하거나 같은 두 점을 중복 연결하지 않
     nodeId: "a",
     connectionSide: "top",
   });
-  h.call("endGesture", pointer({ type: "pointerup", buttons: 0 }));
+  h.call(
+    "endGesture",
+    pointer({ type: "pointerup", buttons: 0, clientX: 230, clientY: 145 }),
+  );
   assert.equal(h.state.history.present.connections.length, 0);
 
   for (let i = 0; i < 2; i++) {
@@ -483,7 +520,10 @@ test("자기 노드와 연결하거나 같은 두 점을 중복 연결하지 않
       nodeId: "b",
       connectionSide: "left",
     });
-    h.call("endGesture", pointer({ type: "pointerup", buttons: 0 }));
+    h.call(
+      "endGesture",
+      pointer({ type: "pointerup", buttons: 0, clientX: 320, clientY: 275 }),
+    );
   }
   const document = h.state.history.present;
   h.call("startNodeConnection", pointer(), document.nodes[1], "left");
@@ -491,7 +531,10 @@ test("자기 노드와 연결하거나 같은 두 점을 중복 연결하지 않
     nodeId: "a",
     connectionSide: "right",
   });
-  h.call("endGesture", pointer({ type: "pointerup", buttons: 0 }));
+  h.call(
+    "endGesture",
+    pointer({ type: "pointerup", buttons: 0, clientX: 230, clientY: 145 }),
+  );
   assert.equal(h.state.history.present, document);
   assert.equal(document.connections.length, 1);
   assert.equal(h.state.history.past.length, 1);
@@ -509,10 +552,13 @@ test("연결된 노드를 삭제하면 관련 연결도 정리되고 함께 복�
     nodeId: "b",
     connectionSide: "left",
   });
-  h.call("endGesture", pointer({ type: "pointerup", buttons: 0 }));
+  h.call(
+    "endGesture",
+    pointer({ type: "pointerup", buttons: 0, clientX: 320, clientY: 275 }),
+  );
   const document = h.state.history.present;
   h.call("selectNode", "b");
-  h.call("deleteSelectedNodes");
+  h.call("deleteSelection");
   assert.equal(h.state.history.present.connections.length, 0);
   h.call("undo");
   assert.equal(h.state.history.present, document);
@@ -563,6 +609,190 @@ test("기존 문서는 빈 연결 목록으로 열고 잘못된 연결 데이터
       ],
     }).success,
   );
+});
+
+test("네 방향 스냅은 확대율에 관계없이 화면 기준 반경을 유지한다", () => {
+  const document = fixture();
+  const source: ConnectionEndpoint = { nodeId: "a", side: "right" };
+  for (const zoom of [0.1, 0.5, 1, 2]) {
+    for (const side of CONNECTION_SIDES) {
+      const node = document.nodes[1];
+      const point = getConnectionPoint(node, side);
+      const direction = {
+        top: { x: 0, y: -1 },
+        right: { x: 1, y: 0 },
+        bottom: { x: 0, y: 1 },
+        left: { x: -1, y: 0 },
+      }[side];
+      const near = {
+        x: point.x + (direction.x * (CONNECTION_SNAP_RADIUS - 1)) / zoom,
+        y: point.y + (direction.y * (CONNECTION_SNAP_RADIUS - 1)) / zoom,
+      };
+      const far = {
+        x: point.x + (direction.x * (CONNECTION_SNAP_RADIUS + 1)) / zoom,
+        y: point.y + (direction.y * (CONNECTION_SNAP_RADIUS + 1)) / zoom,
+      };
+      assert.deepEqual(
+        findConnectionTarget(document.nodes, [], source, near, zoom, node.id),
+        { nodeId: "b", side },
+      );
+      assert.equal(
+        findConnectionTarget(document.nodes, [], source, far, zoom, node.id),
+        null,
+      );
+    }
+  }
+});
+
+test("가장 가까운 점만 찾고 자신·중복 연결·겹친 뒷노드는 제외한다", () => {
+  const nodes = fixture().nodes;
+  const source: ConnectionEndpoint = { nodeId: "a", side: "right" };
+  const target: ConnectionEndpoint = { nodeId: "b", side: "left" };
+  const point = getConnectionPoint(nodes[1], "left");
+  assert.deepEqual(findConnectionTarget(nodes, [], source, point, 1), target);
+  assert.equal(
+    findConnectionTarget(
+      nodes,
+      [],
+      source,
+      getConnectionPoint(nodes[0], "right"),
+      1,
+    ),
+    null,
+  );
+  assert.equal(
+    findConnectionTarget(
+      nodes,
+      [{ id: "edge", source: target, target: source }],
+      source,
+      point,
+      1,
+    ),
+    null,
+  );
+  assert.equal(findConnectionTarget(nodes, [], source, point, 1, "c"), null);
+  assert.equal(findConnectionTarget(nodes, [], source, point, 0), null);
+  const nearNode = { ...nodes[1], id: "near", position: { x: 605, y: 400 } };
+  assert.deepEqual(
+    findConnectionTarget(
+      [...nodes, nearNode],
+      [],
+      source,
+      { x: 604, y: 470 },
+      1,
+    ),
+    { nodeId: "near", side: "left" },
+  );
+});
+
+test("스냅 범위를 벗어나면 해제되고 놓는 위치에서 대상을 다시 검사한다", () => {
+  const h = setup();
+  const document = h.state.history.present;
+  h.call("startNodeConnection", pointer(), document.nodes[0], "right");
+  h.call("moveGesture", pointer({ clientX: 310, clientY: 275 }));
+  assert.equal(h.state.draft?.hoveredNodeId, "b");
+  assert.deepEqual(h.state.draft?.pointer, { x: 600, y: 470 });
+  h.call("moveGesture", pointer({ clientX: 290, clientY: 275 }));
+  assert.equal(h.state.draft?.target, null);
+  assert.deepEqual(h.state.draft?.pointer, { x: 540, y: 470 });
+  h.call("moveGesture", pointer({ clientX: 310, clientY: 275 }));
+  // 마지막 미리보기가 붙어 있어도 실제 release 위치가 멀면 연결하지 않는다.
+  h.call(
+    "endGesture",
+    pointer({ type: "pointerup", buttons: 0, clientX: 290, clientY: 275 }),
+  );
+  assert.equal(h.state.history.present, document);
+  assert.equal(h.state.history.past.length, 0);
+});
+
+test("저장 가능한 연결 수 제한을 넘는 드래그는 시작하지 않는다", () => {
+  const h = setup();
+  const document = h.state.history.present;
+  h.state.history = createWorkspaceHistory({
+    ...document,
+    connections: Array.from({ length: MAX_CONNECTIONS }, (_, i) => ({
+      id: String(i),
+      source: { nodeId: "a", side: "right" },
+      target: { nodeId: "b", side: "left" },
+    })),
+  });
+  h.call("startNodeConnection", pointer(), document.nodes[0], "right");
+  assert.equal(h.gestureRef.current, null);
+  assert.equal(h.state.draft, null);
+});
+
+function setupConnection() {
+  const h = setup(["a"]);
+  const document = {
+    ...fixture(),
+    connections: [
+      {
+        id: "edge",
+        source: { nodeId: "a", side: "right" as const },
+        target: { nodeId: "b", side: "left" as const },
+      },
+    ],
+  };
+  h.state.history = createWorkspaceHistory(document);
+  return h;
+}
+
+test("연결선 선택은 노드 선택과 분리되고 문서·이력을 바꾸지 않는다", () => {
+  const h = setupConnection();
+  const document = h.state.history.present;
+  h.call("selectConnection", "missing");
+  assert.deepEqual(h.state.selected, ["a"]);
+  h.call("selectConnection", "edge");
+  assert.deepEqual(h.state.selected, []);
+  assert.equal(h.state.selectedConnection, "edge");
+  assert.equal(h.state.history.present, document);
+  assert.equal(h.state.history.past.length, 0);
+  h.call("selectNode", "b");
+  assert.equal(h.state.selectedConnection, null);
+  assert.deepEqual(h.state.selected, ["b"]);
+  h.call("selectConnection", "edge");
+  h.call("handleWorkspaceKeyDown", key("Escape"));
+  assert.equal(h.state.selectedConnection, null);
+  h.call("selectConnection", "edge");
+  h.call("startMarquee", pointer());
+  assert.equal(h.state.selectedConnection, null);
+  h.call("clearGesture");
+});
+
+test("선택한 연결선만 Delete·Backspace·버튼으로 삭제하고 Undo/Redo한다", () => {
+  for (const action of ["Delete", "Backspace", "button"]) {
+    const h = setupConnection();
+    const document = h.state.history.present;
+    h.call("selectConnection", "edge");
+    const beforeDeleteFocus = h.state.focusCount;
+    if (action === "button") h.call("deleteSelection");
+    else h.call("handleWorkspaceKeyDown", key(action));
+    assert.equal(h.state.history.present.nodes, document.nodes);
+    assert.equal(h.state.history.present.connections.length, 0);
+    assert.equal(h.state.history.past.length, 1);
+    assert.equal(h.state.selectedConnection, null);
+    assert.equal(h.state.focusCount, beforeDeleteFocus + 1);
+    h.call("undo");
+    assert.equal(h.state.history.present, document);
+    h.call("redo");
+    assert.equal(h.state.history.present.connections.length, 0);
+  }
+});
+
+test("입력칸 삭제와 진행 중인 드래그는 연결선 삭제로 처리하지 않는다", () => {
+  const h = setupConnection();
+  const document = h.state.history.present;
+  h.call("selectConnection", "edge");
+  const inputKey = key("Delete", { target: new TestElement(true) });
+  h.call("handleWorkspaceKeyDown", inputKey);
+  assert.equal(inputKey.defaultPrevented, false);
+  assert.equal(h.state.history.present, document);
+  h.call("startNodeConnection", pointer(), document.nodes[0], "right");
+  h.call("selectConnection", "edge");
+  assert.equal(h.state.selectedConnection, null);
+  h.call("deleteSelection");
+  assert.equal(h.state.history.present, document);
+  h.call("clearGesture");
 });
 
 test("Shift 박스 선택은 기존 선택을 합치고 Escape는 원래 선택으로 복원한다", () => {
@@ -642,7 +872,7 @@ test("포커스를 잃은 드래그도 한 번으로 기록되고 삭제로 중�
   const h = setup(["a"]);
   h.call("startNodeDrag", pointer(), h.state.history.present.nodes[0]);
   h.call("moveGesture", pointer({ clientX: 100 }));
-  h.call("deleteSelectedNodes");
+  h.call("deleteSelection");
   assert.equal(h.state.history.present.nodes.length, 3);
   h.call("clearGesture");
   assert.equal(h.state.history.past.length, 1);
@@ -653,7 +883,7 @@ test("포커스를 잃은 드래그도 한 번으로 기록되고 삭제로 중�
 test("일괄 삭제와 복원은 노드 ID·본문·위치를 함께 유지한다", () => {
   const h = setup(["a", "c"]);
   const document = h.state.history.present;
-  h.call("deleteSelectedNodes");
+  h.call("deleteSelection");
   assert.deepEqual(
     h.state.history.present.nodes.map((node) => node.id),
     ["b"],

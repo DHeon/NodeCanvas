@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { randomUUID } from "node:crypto";
 import { createWorkspace } from "../src/features/workspace/create-workspace";
 import {
   loadWorkspaceDocument,
@@ -136,4 +137,51 @@ test("작업 공간에 자동 저장·브라우저 보관·복구 연결이 남�
     'addEventListener("online"',
   ])
     assert.ok(!source.includes(removed), removed);
+});
+
+test("연결 생성·삭제 문서는 기존 저장 요청과 조회 형식으로 왕복한다", async () => {
+  const document = createWorkspace();
+  document.nodes = [0, 1].map((i) => ({
+    id: randomUUID(),
+    type: "text_node",
+    position: { x: 100 + i * 500, y: 100 },
+    width: 320,
+    height: 220,
+    title: `노드 ${i + 1}`,
+    text: "",
+  }));
+  document.connections = [
+    {
+      id: randomUUID(),
+      source: { nodeId: document.nodes[0].id, side: "right" },
+      target: { nodeId: document.nodes[1].id, side: "left" },
+    },
+  ];
+  let serverDocument = createWorkspace();
+  let version = 0;
+  await withFetch(
+    async (_url, init) => {
+      if (init?.method === "PUT") {
+        const body = JSON.parse(String(init.body));
+        assert.equal(body.expectedVersion, version);
+        serverDocument = body.document;
+        version++;
+        return Response.json({ documentVersion: version });
+      }
+      return Response.json({
+        document: serverDocument,
+        documentVersion: version,
+      });
+    },
+    async () => {
+      assert.equal(await saveWorkspaceDocument("test", document, 0), 1);
+      assert.deepEqual(
+        (await loadWorkspaceDocument("test")).document,
+        document,
+      );
+      const deleted = { ...document, connections: [] };
+      assert.equal(await saveWorkspaceDocument("test", deleted, 1), 2);
+      assert.deepEqual((await loadWorkspaceDocument("test")).document, deleted);
+    },
+  );
 });

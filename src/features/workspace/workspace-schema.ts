@@ -1,21 +1,40 @@
 import { z } from "zod";
 
 import type { WorkspaceDocument } from "./types";
-import { getConnectionKey } from "./connections";
+import { getConnectionKey, MAX_CONNECTIONS } from "./connections";
 
 const pointSchema = z.strictObject({
   x: z.number().min(0),
   y: z.number().min(0),
 });
 
-const textNodeSchema = z.strictObject({
+const nodeBaseSchema = z.strictObject({
   id: z.uuid(),
-  type: z.literal("text_node"),
   position: pointSchema,
   width: z.number().positive().max(10000),
   height: z.number().positive().max(10000),
   title: z.string().max(200),
+});
+
+const textNodeSchema = nodeBaseSchema.extend({
+  type: z.literal("text_node"),
   text: z.string().max(50000),
+});
+
+export const imageReferenceSchema = z.strictObject({
+  id: z.uuid(),
+  width: z.number().int().positive().max(2560),
+  height: z.number().int().positive().max(2560),
+  byteLength: z
+    .number()
+    .int()
+    .positive()
+    .max(5 * 1024 * 1024),
+});
+
+const imageNodeSchema = nodeBaseSchema.extend({
+  type: z.literal("image_node"),
+  image: imageReferenceSchema.nullable(),
 });
 
 const endpointSchema = z.strictObject({
@@ -35,9 +54,11 @@ export const workspaceDocumentSchema = z
       width: z.number().positive().max(10000),
       height: z.number().positive().max(10000),
     }),
-    nodes: z.array(textNodeSchema).max(1000),
+    nodes: z
+      .array(z.discriminatedUnion("type", [textNodeSchema, imageNodeSchema]))
+      .max(1000),
     // 이전에 저장한 문서에는 연결선 항목이 없어도 열린다.
-    connections: z.array(connectionSchema).max(3000).default([]),
+    connections: z.array(connectionSchema).max(MAX_CONNECTIONS).default([]),
   })
   .refine(
     (document) => {

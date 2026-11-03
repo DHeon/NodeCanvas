@@ -31,9 +31,24 @@ model Project {
   owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   document Json? @db.JsonB
   documentVersion Int   @default(0)
+  images ImageAsset[]
   
   @@index([ownerId])
   @@map("project")
+}
+
+model ImageAsset {
+  id        String   @id @default(uuid()) @db.Uuid
+  projectId String   @db.Uuid
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  data      Bytes    @db.ByteA
+  width     Int
+  height    Int
+  byteLength Int
+  createdAt DateTime @default(now())
+
+  @@index([projectId])
+  @@map("image_asset")
 }
 
 model Session {

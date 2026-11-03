@@ -1,34 +1,41 @@
 import Link from "next/link";
+import type { Metadata } from "next";
+import HomeCanvas from "@/features/home/home-canvas";
+import styles from "@/features/home/home.module.css";
+
+export const metadata: Metadata = {
+  title: "nono",
+  description: "노드 기반 작업 공간.",
+};
 
 export default function HomePage() {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-neutral-950 px-6 text-white">
-      <section className="w-full max-w-3xl">
-        <h1 className="my-5 text-5xl leading-tight font-semibold sm:text-7xl">
-          메인
-        </h1>
-        <Link
-          href="/dashboard"
-          className="rounded-xl bg-violet-500 px-5 py-3 font-medium transition hover:bg-violet-400"
-        >
-          대시보드
-        </Link>
-        <div className="mt-7 flex gap-3">
-          <Link
-            href="/login"
-            className="rounded-xl border border-neutral-700 px-5 py-3 font-medium transition hover:bg-neutral-900"
-          >
-            로그인
+    <div className={styles.page}>
+      <a className={styles.skipLink} href="#main-content">
+        본문으로 건너뛰기
+      </a>
+      <header className={styles.header}>
+        <div className={styles.navigation}>
+          <Link href="/" className={styles.brand} aria-label="nono 홈">
+            nono.
           </Link>
-
-          <Link
-            href="/signup"
-            className="rounded-xl border border-neutral-700 px-5 py-3 font-medium transition hover:bg-neutral-900"
-          >
-            회원가입
+          <nav aria-label="메인 메뉴" className={styles.navLinks}>
+            <Link href="/login">로그인</Link>
+            <Link href="/signup">회원가입</Link>
+          </nav>
+        </div>
+      </header>
+      <main id="main-content" className={styles.container}>
+        <div className={styles.actions}>
+          <h1>작업 공간 체험</h1>
+          <Link href="/dashboard" className={styles.dashboardLink}>
+            대시보드로 이동 <span aria-hidden="true">↗</span>
           </Link>
         </div>
-      </section>
-    </main>
+        <section aria-label="작업 공간 체험 캔버스">
+          <HomeCanvas />
+        </section>
+      </main>
+    </div>
   );
 }
