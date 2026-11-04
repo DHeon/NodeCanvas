@@ -72,6 +72,7 @@ function NumberField({
 }
 
 type InspectorProps = {
+  infinite: boolean;
   open: boolean;
   node: WorkspaceNode | undefined;
   selectionCount: number;
@@ -88,6 +89,7 @@ type InspectorProps = {
 };
 
 export default function WorkspaceInspector({
+  infinite,
   open,
   node,
   selectionCount,
@@ -201,7 +203,9 @@ export default function WorkspaceInspector({
                   <p className="text-[11px] leading-5 text-neutral-400">
                     Enter 또는 바깥 클릭으로 적용 · Esc로 취소
                     <br />
-                    캔버스 범위 내에서 조절됩니다.
+                    {infinite
+                      ? "무한 캔버스에서는 음수 좌표도 사용할 수 있습니다."
+                      : "캔버스 범위 내에서 조절됩니다."}
                   </p>
                 </section>
                 {node.type === "text_node" ? (

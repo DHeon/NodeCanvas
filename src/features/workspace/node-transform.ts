@@ -16,8 +16,8 @@ export function fitNodeSize(
   requestedHeight: number,
   axis: "width" | "height" = "width",
 ) {
-  const maxWidth = canvas.width - node.position.x;
-  const maxHeight = canvas.height - node.position.y;
+  const maxWidth = canvas.infinite ? 10000 : canvas.width - node.position.x;
+  const maxHeight = canvas.infinite ? 10000 : canvas.height - node.position.y;
   if (
     node.type === "image_node" &&
     node.image &&
@@ -58,16 +58,20 @@ export function transformNode(
   const nodes = document.nodes.map((node) => {
     if (node.id !== nodeId) return node;
     const position = {
-      x: clamp(
-        patch.x ?? node.position.x,
-        0,
-        document.canvas.width - node.width,
-      ),
-      y: clamp(
-        patch.y ?? node.position.y,
-        0,
-        document.canvas.height - node.height,
-      ),
+      x: document.canvas.infinite
+        ? (patch.x ?? node.position.x)
+        : clamp(
+            patch.x ?? node.position.x,
+            0,
+            document.canvas.width - node.width,
+          ),
+      y: document.canvas.infinite
+        ? (patch.y ?? node.position.y)
+        : clamp(
+            patch.y ?? node.position.y,
+            0,
+            document.canvas.height - node.height,
+          ),
     };
     const size =
       patch.width === undefined && patch.height === undefined

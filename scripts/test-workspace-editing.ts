@@ -845,6 +845,36 @@ test("그룹 이동은 경계에서도 간격을 유지하며 실행 취소 한 
   });
 });
 
+test("무한 캔버스의 실제 그룹 드래그는 음수·기존 경계를 넘어도 간격을 유지한다", () => {
+  const h = setup(["a", "b"]);
+  h.state.history.present.canvas.infinite = true;
+  const document = h.state.history.present;
+  h.call("startNodeDrag", pointer(), document.nodes[0]);
+  h.call("moveGesture", pointer({ clientX: -4980, clientY: -4960 }));
+  assert.deepEqual(h.state.history.present.nodes[0].position, {
+    x: -9900,
+    y: -9900,
+  });
+  assert.deepEqual(h.state.history.present.nodes[1].position, {
+    x: -9400,
+    y: -9600,
+  });
+  h.call("endGesture", pointer({ buttons: 0 }));
+  h.call("undo");
+  assert.equal(h.state.history.present, document);
+});
+
+test("무한 캔버스의 실제 크기 조절은 기존 캔버스 크기에 제한되지 않는다", () => {
+  const h = setup(["a"]);
+  h.state.history.present.canvas.infinite = true;
+  h.call("startNodeResize", pointer(), h.state.history.present.nodes[0]);
+  h.call("moveGesture", pointer({ clientX: 2020, clientY: 2040 }));
+  assert.equal(h.state.history.present.nodes[0].width, 4320);
+  assert.equal(h.state.history.present.nodes[0].height, 4220);
+  h.call("endGesture", pointer({ buttons: 0 }));
+  assert.equal(h.state.history.past.length, 1);
+});
+
 test("크기 조절 Escape는 변경과 이력을 취소하고 포인터 캡처를 해제한다", () => {
   const h = setup(["a", "b"]);
   const document = h.state.history.present;

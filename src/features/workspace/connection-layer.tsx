@@ -32,8 +32,8 @@ export default function ConnectionLayer({
     <svg
       aria-label="노드 연결선"
       className="pointer-events-none absolute top-0 left-0 overflow-visible"
-      width={canvas.width}
-      height={canvas.height}
+      width={canvas.infinite ? 1 : canvas.width}
+      height={canvas.infinite ? 1 : canvas.height}
       fill="none"
     >
       {connections.map((connection) => {

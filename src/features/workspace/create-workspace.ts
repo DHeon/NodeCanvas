@@ -6,7 +6,11 @@ export const DEFAULT_CANVAS_SIZE = { width: 2000, height: 1200 };
 export function expandLegacyCanvas(
   document: WorkspaceDocument,
 ): WorkspaceDocument {
-  if (document.canvas.width !== 1600 || document.canvas.height !== 1000) {
+  if (
+    document.canvas.infinite !== undefined ||
+    document.canvas.width !== 1600 ||
+    document.canvas.height !== 1000
+  ) {
     return document;
   }
   return { ...document, canvas: { ...DEFAULT_CANVAS_SIZE } };

@@ -68,6 +68,8 @@ export type WorkspaceDocument = {
   canvas: {
     width: number;
     height: number;
+    // 이전 문서에 없으면 유한 캔버스로 처리한다.
+    infinite?: boolean;
   };
   nodes: WorkspaceNode[];
   connections: NodeConnection[];

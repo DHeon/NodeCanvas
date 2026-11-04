@@ -155,6 +155,48 @@ async function main() {
       "undo references must remain available",
     );
     assert.equal((await save(a.projectId, a.cookie, document, 2)).status, 200);
+    const infiniteDocument = structuredClone(document);
+    infiniteDocument.canvas.infinite = true;
+    infiniteDocument.nodes[0].position = { x: -450, y: -900 };
+    const textId = randomUUID();
+    infiniteDocument.nodes.push({
+      id: textId,
+      type: "text_node",
+      title: "무한 영역",
+      text: "저장·재조회",
+      position: { x: 22000, y: 16000 },
+      width: 320,
+      height: 220,
+    });
+    infiniteDocument.connections.push({
+      id: randomUUID(),
+      source: { nodeId: infiniteDocument.nodes[0].id, side: "right" },
+      target: { nodeId: textId, side: "left" },
+    });
+    assert.equal(
+      (await save(a.projectId, a.cookie, infiniteDocument, 3)).status,
+      200,
+    );
+    const infiniteLoaded = await (
+      await request(`/api/projects/${a.projectId}/document`, a.cookie)
+    ).json();
+    assert.equal(infiniteLoaded.documentVersion, 4);
+    assert.deepEqual(infiniteLoaded.document, infiniteDocument);
+    assert.equal(
+      (
+        await save(
+          a.projectId,
+          a.cookie,
+          {
+            ...infiniteDocument,
+            canvas: { ...infiniteDocument.canvas, infinite: false },
+          },
+          4,
+        )
+      ).status,
+      400,
+      "finite document rejects out-of-bounds positions",
+    );
     await pool.query('DELETE FROM project WHERE id=$1 AND "ownerId"=$2', [
       a.projectId,
       a.id,

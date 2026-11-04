@@ -4,8 +4,8 @@ import type { WorkspaceDocument } from "./types";
 import { getConnectionKey, MAX_CONNECTIONS } from "./connections";
 
 const pointSchema = z.strictObject({
-  x: z.number().min(0),
-  y: z.number().min(0),
+  x: z.number(),
+  y: z.number(),
 });
 
 const nodeBaseSchema = z.strictObject({
@@ -53,6 +53,7 @@ export const workspaceDocumentSchema = z
     canvas: z.strictObject({
       width: z.number().positive().max(10000),
       height: z.number().positive().max(10000),
+      infinite: z.boolean().optional(),
     }),
     nodes: z
       .array(z.discriminatedUnion("type", [textNodeSchema, imageNodeSchema]))
@@ -73,8 +74,11 @@ export const workspaceDocumentSchema = z
   )
   .refine(
     (document) =>
+      document.canvas.infinite ||
       document.nodes.every(
         (node) =>
+          node.position.x >= 0 &&
+          node.position.y >= 0 &&
           node.position.x + node.width <= document.canvas.width &&
           node.position.y + node.height <= document.canvas.height,
       ),

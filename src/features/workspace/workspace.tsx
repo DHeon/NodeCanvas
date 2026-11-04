@@ -15,6 +15,8 @@ import WorkspaceInspector from "./workspace-inspector";
 import useImageUploads from "./use-image-uploads";
 import { fitNodeSize, replaceNodeImage, transformNode } from "./node-transform";
 import WorkspaceToolbar from "./workspace-toolbar";
+import WorkspaceMenu from "./workspace-menu";
+import { applyCanvasSettings, getFitCamera } from "./canvas-settings";
 import ConnectionLayer from "./connection-layer";
 import { expandLegacyCanvas } from "./create-workspace";
 import {
@@ -111,6 +113,10 @@ export default function Workspace({
     (document) => createWorkspaceHistory(expandLegacyCanvas(document)),
   );
   const workspace = history.present;
+  const workspaceRef = useRef(workspace);
+  useEffect(() => {
+    workspaceRef.current = workspace;
+  }, [workspace]);
   const setWorkspace = useCallback(
     (update: (document: WorkspaceDocument) => WorkspaceDocument) => {
       dispatchHistory({ type: "change", update });
@@ -182,23 +188,12 @@ export default function Workspace({
 
     if (width <= 0 || height <= 0) return;
 
-    const padding = 32;
-
-    const availableWidth = Math.max(width - padding * 2, 1);
-    const availableHeight = Math.max(height - padding * 2, 1);
-
-    const zoom = Math.min(
-      availableWidth / workspace.canvas.width,
-      availableHeight / workspace.canvas.height,
-      1,
-    );
-
-    setCamera({
-      x: (width - workspace.canvas.width * zoom) / 2,
-      y: (height - workspace.canvas.height * zoom) / 2,
-      zoom,
-    });
-  }, [workspace.canvas.width, workspace.canvas.height]);
+    setCamera(getFitCamera(workspaceRef.current, width, height));
+  }, [
+    workspace.canvas.width,
+    workspace.canvas.height,
+    workspace.canvas.infinite,
+  ]);
 
   // 드래그 정리
   const clearGesture = useCallback(() => {
@@ -763,20 +758,24 @@ export default function Workspace({
 
     setWorkspace((current) => {
       // 전체 선택의 이동량을 한 번 제한해 경계에서도 노드 사이 간격을 유지한다.
-      const moveX = Math.max(
-        -gesture.bounds.left,
-        Math.min(
-          deltaX / gesture.zoom,
-          current.canvas.width - gesture.bounds.right,
-        ),
-      );
-      const moveY = Math.max(
-        -gesture.bounds.top,
-        Math.min(
-          deltaY / gesture.zoom,
-          current.canvas.height - gesture.bounds.bottom,
-        ),
-      );
+      const moveX = current.canvas.infinite
+        ? deltaX / gesture.zoom
+        : Math.max(
+            -gesture.bounds.left,
+            Math.min(
+              deltaX / gesture.zoom,
+              current.canvas.width - gesture.bounds.right,
+            ),
+          );
+      const moveY = current.canvas.infinite
+        ? deltaY / gesture.zoom
+        : Math.max(
+            -gesture.bounds.top,
+            Math.min(
+              deltaY / gesture.zoom,
+              current.canvas.height - gesture.bounds.bottom,
+            ),
+          );
       let changed = false;
 
       const nodes = current.nodes.map((node) => {
@@ -842,23 +841,33 @@ export default function Workspace({
     const rect = viewport.getBoundingClientRect();
     const width = Math.min(
       type === "image_node" ? 360 : 320,
-      workspace.canvas.width,
+      workspace.canvas.infinite ? 10000 : workspace.canvas.width,
     );
     const height = Math.min(
       type === "image_node" ? 280 : 220,
-      workspace.canvas.height,
+      workspace.canvas.infinite ? 10000 : workspace.canvas.height,
     );
     const centerX = (rect.width / 2 - camera.x) / camera.zoom;
     const centerY = (rect.height / 2 - camera.y) / camera.zoom;
     const offset = (workspace.nodes.length % 6) * 24;
-    const x = Math.max(
-      0,
-      Math.min(centerX - width / 2 + offset, workspace.canvas.width - width),
-    );
-    const y = Math.max(
-      0,
-      Math.min(centerY - height / 2 + offset, workspace.canvas.height - height),
-    );
+    const x = workspace.canvas.infinite
+      ? centerX - width / 2 + offset
+      : Math.max(
+          0,
+          Math.min(
+            centerX - width / 2 + offset,
+            workspace.canvas.width - width,
+          ),
+        );
+    const y = workspace.canvas.infinite
+      ? centerY - height / 2 + offset
+      : Math.max(
+          0,
+          Math.min(
+            centerY - height / 2 + offset,
+            workspace.canvas.height - height,
+          ),
+        );
     const base = { id: uuidv4(), position: { x, y }, width, height, title: "" };
     const node: WorkspaceNode =
       type === "image_node"
@@ -1050,6 +1059,10 @@ export default function Workspace({
       : undefined;
   const selectionCount =
     selectedNodeIds.length + (selectedConnectionId ? 1 : 0);
+  // 축소할 때 중간 점을 단계적으로 생략해 배경이 빽빽해지지 않도록 한다.
+  const gridStep =
+    24 * 2 ** Math.max(0, Math.ceil(Math.log2(0.5 / camera.zoom)));
+  const dotRadius = Math.max(0.8, camera.zoom);
   const selectionDescription = selectedConnectionId
     ? "선택한 연결선 삭제 (Delete / Backspace)"
     : `선택한 노드 ${selectedNodeIds.length}개 삭제 (Delete / Backspace)`;
@@ -1218,6 +1231,17 @@ export default function Workspace({
           </p>
         )}
       </header>
+      <WorkspaceMenu
+        canvas={workspace.canvas}
+        onApply={(canvas) => {
+          if (gestureRef.current) return "드래그를 마친 뒤 다시 시도해주세요.";
+          const result = applyCanvasSettings(workspace, canvas);
+          if (result.error) return result.error;
+          dispatchHistory({ type: "commit" });
+          setWorkspace(() => result.document!);
+          return null;
+        }}
+      />
       {/* 뷰포트  */}
       <div className="relative flex min-h-0 flex-1">
         <WorkspaceToolbar
@@ -1229,6 +1253,12 @@ export default function Workspace({
           tabIndex={-1}
           className="relative min-h-0 flex-1 overflow-clip outline-none"
           style={{
+            backgroundColor: workspace.canvas.infinite ? "#fff" : undefined,
+            backgroundImage: workspace.canvas.infinite
+              ? `radial-gradient(circle, #b8bcc4 ${dotRadius}px, transparent ${dotRadius}px)`
+              : undefined,
+            backgroundSize: `${gridStep * camera.zoom}px ${gridStep * camera.zoom}px`,
+            backgroundPosition: `${camera.x}px ${camera.y}px`,
             cursor: isPanning
               ? "grabbing"
               : connectionDraft
@@ -1248,10 +1278,14 @@ export default function Workspace({
         >
           {/* 캔버스 */}
           <div
-            className="absolute top-0 left-0 origin-top-left bg-white shadow-sm"
+            className={`absolute top-0 left-0 origin-top-left ${workspace.canvas.infinite ? "" : "bg-white shadow-sm"}`}
             style={{
-              width: workspace.canvas.width,
-              height: workspace.canvas.height,
+              width: workspace.canvas.infinite ? 0 : workspace.canvas.width,
+              height: workspace.canvas.infinite ? 0 : workspace.canvas.height,
+              backgroundImage: workspace.canvas.infinite
+                ? undefined
+                : `radial-gradient(circle, #b8bcc4 ${dotRadius / camera.zoom}px, transparent ${dotRadius / camera.zoom}px)`,
+              backgroundSize: `${gridStep}px ${gridStep}px`,
               transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.zoom})`,
             }}
           >
@@ -1264,7 +1298,7 @@ export default function Workspace({
               zoom={camera.zoom}
               onSelect={selectConnection}
             />
-            {workspace.nodes.length === 0 && (
+            {workspace.nodes.length === 0 && !workspace.canvas.infinite && (
               <div className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-neutral-400">
                 빈 작업 공간
               </div>
@@ -1321,6 +1355,7 @@ export default function Workspace({
           </div>
         </div>
         <WorkspaceInspector
+          infinite={!!workspace.canvas.infinite}
           open={inspectorOpen}
           node={selectedNode}
           selectionCount={selectedNodeIds.length}
