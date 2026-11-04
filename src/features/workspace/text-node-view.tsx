@@ -10,6 +10,7 @@ export default function TextNodeView({ node, ...frame }: TextNodeViewProps) {
     <NodeFrame {...frame} node={node}>
       <textarea
         aria-label="텍스트 노드 내용"
+        spellCheck={false}
         placeholder="내용을 입력하세요"
         maxLength={50000}
         value={node.text}

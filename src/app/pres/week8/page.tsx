@@ -3,9 +3,9 @@ import Link from "next/link";
 import { workflows } from "./content";
 
 export const metadata: Metadata = {
-  title: "Nono | 8주차 연결선, Inspector, 이미지 노드",
+  title: "Nono | 8주차 연결선, Properties, 이미지 노드와 무한 캔버스",
   description:
-    "연결선과 Inspector, 이미지 업로드의 사용자 조작부터 상태 변경과 서버 저장까지",
+    "연결선, Properties, 이미지 노드와 무한 캔버스의 조작부터 상태 변경과 서버 저장까지",
 };
 
 export default function Week8Page() {
@@ -28,7 +28,7 @@ export default function Week8Page() {
             </Link>
           </div>
           <h1 className="mt-6 text-4xl leading-tight font-semibold tracking-tight sm:text-6xl">
-            연결선, Inspector, 이미지 노드
+            연결선, Properties, 이미지 노드와 무한 캔버스
           </h1>
           <p className="mt-6 max-w-3xl text-lg leading-8 text-neutral-300">
             사용자 조작에서 상태 변경, 화면 갱신과 서버 저장까지
@@ -54,7 +54,7 @@ export default function Week8Page() {
             href="#persistence"
             className="shrink-0 text-sm text-neutral-300 hover:text-violet-200"
           >
-            05 저장되는 데이터
+            {String(workflows.length + 1).padStart(2, "0")} 저장되는 데이터
           </a>
         </nav>
         {workflows.map((flow, index) => (
@@ -145,7 +145,7 @@ export default function Week8Page() {
           className="scroll-mt-24 py-14 sm:py-20"
         >
           <p className="font-mono text-sm tracking-widest text-violet-300">
-            05
+            {String(workflows.length + 1).padStart(2, "0")}
           </p>
           <h2 id="persistence-title" className="mt-3 text-3xl font-semibold">
             저장되는 데이터
@@ -176,12 +176,17 @@ export default function Week8Page() {
                     "nodes·connections·이미지 참조. 저장 버튼으로 확정한다.",
                   ],
                   [
+                    "캔버스 모드와 크기",
+                    "project.document.canvas",
+                    "infinite·width·height. 모드와 크기 변경도 저장 버튼으로 확정한다.",
+                  ],
+                  [
                     "이미지 파일",
                     "image_asset (bytea)",
                     "프로젝트별 WebP 바이너리. 업로드가 끝나면 서버에 존재한다.",
                   ],
                   [
-                    "Inspector 수정값",
+                    "Properties 수정값",
                     "같은 document의 node",
                     "별도 설정 사본 없이 노드의 제목·좌표·크기·내용을 바꾼다.",
                   ],

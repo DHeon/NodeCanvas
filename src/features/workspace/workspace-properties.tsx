@@ -71,7 +71,7 @@ function NumberField({
   );
 }
 
-type InspectorProps = {
+type PropertiesProps = {
   infinite: boolean;
   open: boolean;
   node: WorkspaceNode | undefined;
@@ -88,7 +88,7 @@ type InspectorProps = {
   onReturnToCanvas: () => void;
 };
 
-export default function WorkspaceInspector({
+export default function WorkspaceProperties({
   infinite,
   open,
   node,
@@ -103,29 +103,29 @@ export default function WorkspaceInspector({
   onRemoveImage,
   onDelete,
   onReturnToCanvas,
-}: InspectorProps) {
+}: PropertiesProps) {
   return (
     <div className="relative z-30 flex shrink-0">
       <button
         type="button"
         onClick={onToggle}
-        aria-label={open ? "Inspector 닫기" : "Inspector 열기"}
+        aria-label={open ? "Properties 닫기" : "Properties 열기"}
         aria-expanded={open}
-        aria-controls="workspace-inspector"
-        title={open ? "Inspector 닫기" : "Inspector 열기"}
+        aria-controls="workspace-properties"
+        title={open ? "Properties 닫기" : "Properties 열기"}
         className="absolute top-4 right-full grid h-10 w-7 place-items-center rounded-l-lg border border-r-0 border-neutral-300 bg-white text-neutral-600 shadow-sm hover:bg-neutral-100"
       >
         {open ? "›" : "‹"}
       </button>
       {open && (
         <aside
-          id="workspace-inspector"
-          aria-label="노드 Inspector"
+          id="workspace-properties"
+          aria-label="노드 Properties"
           className="flex w-72 max-w-[45vw] flex-col border-l border-neutral-300 bg-neutral-50"
         >
           <header className="border-b border-neutral-200 px-5 py-4">
             <p className="text-[10px] font-semibold tracking-widest text-neutral-400">
-              INSPECTOR
+              PROPERTIES
             </p>
             <h2 className="mt-1 text-sm font-medium">
               {node
@@ -151,7 +151,8 @@ export default function WorkspaceInspector({
                   <label className="block space-y-2 text-xs text-neutral-500">
                     <span>제목</span>
                     <input
-                      aria-label="Inspector 노드 제목"
+                      aria-label="Properties 노드 제목"
+                      spellCheck={false}
                       maxLength={200}
                       value={node.title}
                       className={inputClass}
@@ -214,7 +215,8 @@ export default function WorkspaceInspector({
                       본문
                     </h3>
                     <textarea
-                      aria-label="Inspector 텍스트 본문"
+                      aria-label="Properties 텍스트 본문"
+                      spellCheck={false}
                       value={node.text}
                       maxLength={50000}
                       rows={7}

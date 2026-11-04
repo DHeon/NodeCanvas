@@ -816,6 +816,35 @@ test("빈 공간 클릭은 선택 해제하고 노드 위에서는 박스 선택
   assert.equal(h.state.rect, null);
 });
 
+test("제목 바 클릭과 미세 이동은 캡처·문서 변경 없이 끝나 더블클릭을 유지한다", () => {
+  const h = setup(["a"]);
+  const document = h.state.history.present;
+  for (let click = 0; click < 2; click++) {
+    h.call("startNodeDrag", pointer(), document.nodes[0]);
+    assert.equal(h.state.captured, false);
+    h.call("moveGesture", pointer({ clientX: 21, clientY: 41 }));
+    assert.equal(h.state.history.present, document);
+    assert.equal(h.state.captured, false);
+    h.call("endGesture", pointer({ buttons: 0 }));
+  }
+  assert.equal(h.gestureRef.current, null);
+  assert.equal(h.state.history.past.length, 0);
+});
+
+test("제목 바 드래그는 3px 이상 이동할 때 캡처하고 한 번의 이력으로 끝난다", () => {
+  const h = setup(["a"]);
+  const document = h.state.history.present;
+  h.call("startNodeDrag", pointer(), document.nodes[0]);
+  h.call("moveGesture", pointer({ clientX: 23, clientY: 40 }));
+  assert.equal(h.state.captured, true);
+  assert.equal(h.state.history.present.nodes[0].position.x, 106);
+  h.call("endGesture", pointer({ buttons: 0 }));
+  assert.equal(h.state.captured, false);
+  assert.equal(h.state.history.past.length, 1);
+  h.call("undo");
+  assert.equal(h.state.history.present, document);
+});
+
 test("그룹 이동은 경계에서도 간격을 유지하며 실행 취소 한 번으로 복원한다", () => {
   const h = setup(["a", "b"]);
   const document = h.state.history.present;

@@ -74,7 +74,7 @@ test("텍스트·빈 이미지·채워진 이미지는 기존 문서 형식과 �
   );
 });
 
-test("Inspector 좌표·크기는 범위를 제한하고 잘못된 숫자·무변경은 무시한다", () => {
+test("Properties 좌표·크기는 범위를 제한하고 잘못된 숫자·무변경은 무시한다", () => {
   const document = fixture();
   const id = document.nodes[0].id;
   const moved = transformNode(document, id, { x: -100, y: 99999 });
@@ -118,7 +118,7 @@ test("가로·세로 이미지의 크기 조절은 헤더를 제외한 이미지
   }
 });
 
-test("이미지 교체·제거·Inspector 수정은 Undo/Redo되며 삭제된 노드를 되살리지 않는다", () => {
+test("이미지 교체·제거·Properties 수정은 Undo/Redo되며 삭제된 노드를 되살리지 않는다", () => {
   const document = fixture();
   const id = document.nodes[0].id;
   const image = reference();

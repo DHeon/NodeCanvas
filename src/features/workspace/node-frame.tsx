@@ -1,4 +1,10 @@
-import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
 import { CONNECTION_SIDES } from "./connections";
 import type {
   ConnectionSide,
@@ -27,7 +33,7 @@ export type NodeFrameProps = {
   ) => void;
   onSelect: (nodeId: string, additive?: boolean) => void;
   onDragStart: (
-    event: ReactPointerEvent<HTMLButtonElement>,
+    event: ReactPointerEvent<HTMLElement>,
     node: WorkspaceNode,
   ) => void;
   onResizeStart: (
@@ -56,6 +62,21 @@ export default function NodeFrame({
   children,
 }: NodeFrameProps) {
   const label = node.type === "image_node" ? "이미지" : "텍스트";
+  const [editingTitle, setEditingTitle] = useState(false);
+  const titleInput = useRef<HTMLInputElement>(null);
+  const titleBar = useRef<HTMLElement>(null);
+  const titleBeforeEdit = useRef(node.title);
+  useEffect(() => {
+    if (editingTitle) {
+      titleInput.current?.focus({ preventScroll: true });
+      titleInput.current?.select();
+    }
+  }, [editingTitle]);
+  function editTitle() {
+    titleBeforeEdit.current = node.title;
+    onSelect(node.id);
+    setEditingTitle(true);
+  }
   return (
     <article
       tabIndex={-1}
@@ -84,32 +105,81 @@ export default function NodeFrame({
       }}
     >
       <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[inherit]">
-        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-neutral-200 bg-neutral-50 px-3">
-          <button
-            type="button"
-            aria-label={`${label} 노드 이동`}
-            title="드래그해서 이동"
-            onPointerDown={(event) => onDragStart(event, node)}
-            onFocus={() => onSelect(node.id)}
-            className="shrink-0 cursor-grab touch-none rounded px-1 text-neutral-500 select-none hover:bg-neutral-200 active:cursor-grabbing"
-          >
-            ⠿
-          </button>
-          <input
-            aria-label={`${label} 노드 제목`}
-            placeholder={label === "이미지" ? "이미지" : "제목"}
-            maxLength={200}
-            value={node.title}
-            onFocus={() => {
-              onSelect(node.id);
-              onEditStart();
-            }}
-            onBlur={onEditEnd}
-            onChange={(event) =>
-              onChange(node.id, { title: event.target.value })
+        <header
+          ref={titleBar}
+          data-node-title-bar=""
+          tabIndex={editingTitle ? -1 : 0}
+          aria-label={`${label} 노드 제목 바`}
+          title="드래그해서 이동 · 더블클릭으로 제목 편집 (Enter / F2)"
+          onPointerDown={(event) => {
+            if (
+              event.target instanceof Element &&
+              event.target.closest("input")
+            )
+              return;
+            onDragStart(event, node);
+          }}
+          onDoubleClick={(event) => {
+            if (event.button !== 0 || event.shiftKey || editingTitle) return;
+            event.stopPropagation();
+            editTitle();
+          }}
+          onFocus={(event) => {
+            if (event.target === event.currentTarget) onSelect(node.id);
+          }}
+          onKeyDown={(event) => {
+            if (
+              !editingTitle &&
+              (event.key === "Enter" || event.key === "F2")
+            ) {
+              event.preventDefault();
+              event.stopPropagation();
+              editTitle();
             }
-            className="min-w-0 flex-1 rounded bg-transparent px-1 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-neutral-400"
-          />
+          }}
+          className="focus-visible:outline-inset flex h-12 shrink-0 cursor-grab touch-none items-center border-b border-neutral-200 bg-neutral-50 px-4 select-none focus-visible:outline-2 focus-visible:outline-neutral-400 active:cursor-grabbing"
+        >
+          {editingTitle ? (
+            <input
+              ref={titleInput}
+              aria-label={`${label} 노드 제목`}
+              spellCheck={false}
+              placeholder={label === "이미지" ? "이미지" : "제목"}
+              maxLength={200}
+              value={node.title}
+              onFocus={() => {
+                onSelect(node.id);
+                onEditStart();
+              }}
+              onPointerDown={(event) => event.stopPropagation()}
+              onBlur={() => {
+                setEditingTitle(false);
+                onEditEnd();
+              }}
+              onChange={(event) =>
+                onChange(node.id, { title: event.target.value })
+              }
+              onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing || event.keyCode === 229)
+                  return;
+                if (event.key === "Enter" || event.key === "Escape") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (event.key === "Escape")
+                    onChange(node.id, { title: titleBeforeEdit.current });
+                  event.currentTarget.blur();
+                  titleBar.current?.focus({ preventScroll: true });
+                }
+              }}
+              className="min-w-0 flex-1 cursor-text touch-auto rounded bg-white px-1 text-sm font-medium outline-none select-text focus-visible:ring-2 focus-visible:ring-neutral-400"
+            />
+          ) : (
+            <span
+              className={`min-w-0 flex-1 truncate text-sm font-medium ${node.title ? "" : "text-neutral-400"}`}
+            >
+              {node.title || (node.type === "image_node" ? "이미지" : "제목")}
+            </span>
+          )}
         </header>
         {children}
         <button

@@ -10,7 +10,7 @@ export type Workflow = {
 
 const workspace = "src/features/workspace/workspace.tsx";
 const connections = "src/features/workspace/connections.ts";
-const inspector = "src/features/workspace/workspace-inspector.tsx";
+const properties = "src/features/workspace/workspace-properties.tsx";
 const images = "src/features/workspace/use-image-uploads.ts";
 
 export const workflows: Workflow[] = [
@@ -141,36 +141,36 @@ if (distance <= nearestDistance) {
     note: "선택 ID와 드래그 미리보기는 화면 상태다. 저장되는 연결 관계와 분리하므로 선택하거나 스냅 후보를 바꾸는 것만으로 문서를 수정하지 않는다.",
   },
   {
-    id: "inspector",
-    title: "Inspector에서 노드 편집",
+    id: "properties",
+    title: "Properties에서 노드 편집",
     action: "노드 하나 선택 후 오른쪽에서 제목·위치·크기 또는 종류별 내용 수정",
     result:
-      "Inspector와 캔버스가 동일한 문서를 읽기 때문에 한쪽의 수정이 다른 쪽에도 바로 반영된다.",
+      "Properties와 캔버스가 동일한 문서를 읽기 때문에 한쪽의 수정이 다른 쪽에도 바로 반영된다.",
     steps: [
       {
         event: "노드 하나 선택",
         fn: "selectNode() / selectedNode",
         file: workspace,
         detail:
-          "selectedNodeIds의 ID로 실제 노드를 찾고 WorkspaceInspector에 전달한다. 여러 개 선택한 경우 일괄 편집 대신 안내를 보여준다. 열림 여부는 별도 inspectorOpen 상태로 유지한다.",
+          "selectedNodeIds의 ID로 실제 노드를 찾고 WorkspaceProperties에 전달한다. 여러 개 선택한 경우 일괄 편집 대신 안내를 보여준다. 열림 여부는 별도 propertiesOpen 상태로 유지한다.",
       },
       {
         event: "제목 또는 본문 입력",
         fn: "onChange() / updateTextNode()",
-        file: `${inspector} / ${workspace}`,
+        file: `${properties} / ${workspace}`,
         detail:
-          "Inspector가 문서를 따로 복사하지 않고 부모 콜백에 nodeId와 변경값을 전달한다. Workspace가 해당 노드만 새 객체로 바꾸고 NodeFrame·종류별 본문을 다시 렌더링한다.",
+          "Properties가 문서를 따로 복사하지 않고 부모 콜백에 nodeId와 변경값을 전달한다. Workspace가 해당 노드만 새 객체로 바꾸고 NodeFrame·종류별 본문을 다시 렌더링한다.",
       },
       {
         event: "X/Y/W/H 입력 후 Enter 또는 바깥 클릭",
         fn: "NumberField.onBlur / updateNodeTransform() / transformNode()",
         file: "src/features/workspace/node-transform.ts",
         detail:
-          "입력 중에는 draft를 보관하고, 실제 수정한 유효 숫자만 확정한다. 좌표와 크기를 캔버스 범위로 제한한다. Esc는 취소한다. 이미지는 W나 H를 바꿔도 원본 비율을 유지한다.",
+          "입력 중에는 draft를 보관하고, 실제 수정한 유효 숫자만 확정한다. 유한 모드에서는 캔버스 범위로 제한하고 무한 모드에서는 음수 좌표도 허용한다. Esc는 취소한다. 이미지는 W나 H를 바꿔도 원본 비율을 유지한다.",
       },
       {
         event: "편집 종료 또는 패널 닫기",
-        fn: "beginTextEdit() / endTextEdit() / setInspectorOpen()",
+        fn: "beginTextEdit() / endTextEdit() / setPropertiesOpen()",
         file: workspace,
         detail:
           "포커스와 blur를 begin·commit 이력에 연결해 편집을 묶는다. 닫기 화살표는 문서를 바꾸지 않고 패널만 닫는다. 닫은 뒤 노드를 다시 선택해도 자동으로 열지 않는다.",
@@ -178,8 +178,8 @@ if (distance <= nearestDistance) {
     ],
     snippets: [
       {
-        title: "Inspector는 변경 요청을 부모로 전달",
-        file: `${inspector} / WorkspaceInspector`,
+        title: "Properties는 변경 요청을 부모로 전달",
+        file: `${properties} / WorkspaceProperties`,
         code: `onChange={(event) =>
   onChange(node.id, { title: event.target.value })
 }
@@ -219,7 +219,7 @@ onEditEnd={endTextEdit}`,
         fn: "addNode() / chooseImage() / handlePaste()",
         file: workspace,
         detail:
-          "도구바는 파일 창 없이 image: null인 노드를 만든다. + 또는 Inspector에서 파일을 선택한다. 이미지 노드가 선택되어 있으면 교체하고, 빈 공간에서 붙여넣으면 새 이미지 노드를 만든다.",
+          "도구바는 파일 창 없이 image: null인 노드를 만든다. + 또는 Properties에서 파일을 선택한다. 이미지 노드가 선택되어 있으면 교체하고, 빈 공간에서 붙여넣으면 새 이미지 노드를 만든다.",
       },
       {
         event: "파일 전송",
@@ -283,6 +283,110 @@ onEditEnd={endTextEdit}`,
     ],
     note: "이미지 업로드와 문서 저장은 별도다. 이미지 제거·교체 직후 파일까지 지우면 Undo가 깨질 수 있어 자산을 남겨 둔다. 현재는 프로젝트 삭제 시 함께 제거한다. 대량 사진용 저장소와 미사용 자산 정리는 후속 과제다.",
   },
+  {
+    id: "infinite-canvas",
+    title: "무한 캔버스",
+    action:
+      "편집 메뉴에서 무한 캔버스를 선택하고 적용한 뒤, 휠 클릭 드래그로 화면 이동",
+    result:
+      "뷰포트 크기는 유지하면서 노드 배치의 경계 제한을 해제한다. 음수 좌표와 기존 가로·세로 크기 밖에도 노드를 놓을 수 있다.",
+    steps: [
+      {
+        event: "편집 메뉴에서 모드 선택 후 적용",
+        fn: "WorkspaceMenu.submit() / applyCanvasSettings()",
+        file: "src/features/workspace/workspace-menu.tsx / canvas-settings.ts",
+        detail:
+          "메뉴에서 선택한 infinite 값을 부모에게 전달한다. applyCanvasSettings가 새 canvas 설정을 만들고 Workspace가 setWorkspace로 문서를 갱신한다. 무한 모드에서 가로·세로 값은 경계로 사용하지 않고 유한 모드로 돌아갈 설정값으로 남겨 둔다.",
+      },
+      {
+        event: "노드 이동·생성 또는 Properties 좌표 수정",
+        fn: "moveGesture() / addNode() / transformNode()",
+        file: `${workspace} / src/features/workspace/node-transform.ts`,
+        detail:
+          "유한 모드의 이동량·생성 위치 제한을 무한 모드에서는 적용하지 않는다. Properties도 음수 좌표를 허용한다. 노드 ID와 연결 관계는 그대로 유지하므로 연결선은 새 위치에서 끝점을 다시 계산한다.",
+      },
+      {
+        event: "휠 클릭 드래그 또는 마우스 휠",
+        fn: "startPan() / moveGesture() / handleWheel()",
+        file: workspace,
+        detail:
+          "화면을 이동할 때는 노드 좌표 대신 camera.x·y를 변경한다. 화면 위치는 노드 좌표 × zoom + 카메라 이동량으로 계산한다. 휠 확대·축소 시에는 커서 아래의 캔버스 좌표가 같은 화면 위치에 남도록 카메라도 함께 보정한다.",
+      },
+      {
+        event: "점 배경 갱신",
+        fn: "camera / gridStep / backgroundPosition",
+        file: workspace,
+        detail:
+          "거대한 배경 이미지나 수많은 점 요소를 만들지 않고 뷰포트에 CSS radial-gradient를 반복한다. 배경 위치는 카메라 이동량, 점 간격은 확대율에 맞춘다. 축소 시에는 중간 점을 단계적으로 생략해 배경이 빽빽해지는 것을 줄인다.",
+      },
+      {
+        event: "화면 맞춤 버튼",
+        fn: "fitCanvas() / getFitCamera() / getNodeBounds()",
+        file: "src/features/workspace/canvas-settings.ts",
+        detail:
+          "무한 공간 전체 대신 현재 노드들을 감싸는 left·top·right·bottom을 계산한다. 그 영역이 여백을 두고 들어오도록 확대율과 카메라 위치를 정한다. 노드가 없으면 보관한 가로·세로 값을 초기 화면 기준으로 사용한다.",
+      },
+      {
+        event: "유한 모드로 전환 또는 저장 버튼",
+        fn: "applyCanvasSettings() / workspaceDocumentSchema / saveWorkspace()",
+        file: "src/features/workspace/canvas-settings.ts / workspace-schema.ts",
+        detail:
+          "유한 모드로 돌아갈 때는 전체 배치를 평행 이동해 노드 간격과 크기를 보존한다. 내용이 입력 크기보다 크면 적용을 거절하고 필요한 최소 크기를 안내한다. 저장 시 infinite와 노드 좌표를 JSONB에 함께 기록하며, 서버도 모드에 따라 경계 검사를 구분한다.",
+      },
+    ],
+    snippets: [
+      {
+        title: "무한 모드에서는 노드 이동량의 경계 제한 해제",
+        file: `${workspace} / moveGesture()`,
+        code: `const moveX = current.canvas.infinite
+  ? deltaX / gesture.zoom
+  : Math.max(
+      -gesture.bounds.left,
+      Math.min(
+        deltaX / gesture.zoom,
+        current.canvas.width - gesture.bounds.right,
+      ),
+    );
+
+// Y도 같은 방식으로 계산
+const x = startPosition.x + moveX;
+const y = startPosition.y + moveY;`,
+      },
+      {
+        title: "화면 이동은 노드 좌표가 아닌 카메라 변경",
+        file: `${workspace} / moveGesture() / 캔버스 style`,
+        code: `// 휠 클릭 드래그 중
+setCamera((current) => ({
+  ...current,
+  x: gesture.startCamera.x + deltaX,
+  y: gesture.startCamera.y + deltaY,
+}));
+
+// 노드들을 담은 요소에 공통 변환 적용
+transform: \`translate(\${camera.x}px, \${camera.y}px)
+  scale(\${camera.zoom})\`
+
+// 화면 좌표 = 캔버스 좌표 × zoom + camera 이동량`,
+      },
+      {
+        title: "무한 공간 대신 노드 전체를 화면에 맞춤",
+        file: "src/features/workspace/canvas-settings.ts / getFitCamera()",
+        code: `const bounds = document.canvas.infinite
+  ? getNodeBounds(document.nodes)
+  : null;
+
+const left = bounds?.left ?? 0;
+const top = bounds?.top ?? 0;
+const contentWidth = bounds
+  ? bounds.right - left : document.canvas.width;
+const contentHeight = bounds
+  ? bounds.bottom - top : document.canvas.height;
+
+// 이 영역이 뷰포트 안에 들어오도록 zoom과 camera 계산`,
+      },
+    ],
+    note: "무한 크기의 DOM 요소를 생성하는 방식이 아니라 좌표 공간의 일부를 카메라로 보여주는 구조다. 모드·크기 변경도 Undo/Redo와 수동 저장에 포함한다. 현재는 모든 노드를 렌더링하며, 화면 밖 노드를 생략하는 최적화는 아직 적용하지 않았다.",
+  },
 ];
 
 // 같은 내용을 실제 작업 공간에서도 읽을 수 있도록 세 가지 흐름으로 요약한다.
@@ -307,19 +411,19 @@ export const canvasRows = [
   ],
   [
     {
-      title: "05 Inspector · 노드 선택",
-      text: "selectNode / selectedNode\n\n선택 ID로 노드를 찾아 오른쪽 패널에 전달한다. 여러 개 선택하면 안내만 표시한다.\n\n패널 열림은 inspectorOpen으로 관리한다. 한 번 닫으면 다른 노드를 눌러도 닫힘을 유지한다.",
+      title: "05 Properties · 노드 선택",
+      text: "selectNode / selectedNode\n\n선택 ID로 노드를 찾아 오른쪽 패널에 전달한다. 여러 개 선택하면 안내만 표시한다.\n\n패널 열림은 propertiesOpen으로 관리한다. 한 번 닫으면 다른 노드를 눌러도 닫힘을 유지한다.",
     },
     {
-      title: "06 Inspector · 값 변경",
-      text: "WorkspaceInspector / 콜백\n\n제목·본문은 updateTextNode에 변경값을 전달한다. 숫자는 draft에 입력한 뒤 Enter나 blur로 확정하고 Esc로 취소한다.\n\n패널은 문서를 따로 복사하지 않는다. Workspace가 문서 상태를 소유한다.",
+      title: "06 Properties · 값 변경",
+      text: "WorkspaceProperties / 콜백\n\n제목·본문은 updateTextNode에 변경값을 전달한다. 숫자는 draft에 입력한 뒤 Enter나 blur로 확정하고 Esc로 취소한다.\n\n패널은 문서를 따로 복사하지 않는다. Workspace가 문서 상태를 소유한다.",
     },
     {
-      title: "07 Inspector · 경계와 비율",
+      title: "07 Properties · 경계와 비율",
       text: "updateNodeTransform / transformNode\n\n유효 숫자만 받고 X/Y/W/H를 캔버스 범위로 제한한다.\n\n이미지는 fitNodeSize가 원본 비율과 제목 영역 48px을 고려한다. 위치가 바뀌면 연결선 끝점도 다시 계산한다.",
     },
     {
-      title: "08 Inspector · 화면과 이력",
+      title: "08 Properties · 화면과 이력",
       text: "setWorkspace / history.present\n\n새 node가 NodeFrame과 종류별 본문에 전달돼 캔버스가 갱신된다.\n\nbeginTextEdit와 endTextEdit로 편집을 묶어 Undo 한 번으로 되돌린다. 패널 표시 상태와 선택은 문서에 저장하지 않는다.",
     },
   ],

@@ -11,7 +11,7 @@ import type {
 } from "react";
 import TextNodeView from "./text-node-view";
 import ImageNodeView from "./image-node-view";
-import WorkspaceInspector from "./workspace-inspector";
+import WorkspaceProperties from "./workspace-properties";
 import useImageUploads from "./use-image-uploads";
 import { fitNodeSize, replaceNodeImage, transformNode } from "./node-transform";
 import WorkspaceToolbar from "./workspace-toolbar";
@@ -65,6 +65,7 @@ type Gesture =
     }
   | {
       kind: "node";
+      moved: boolean;
       pointerId: number;
       startPointer: Point;
       startPositions: Map<string, Point>;
@@ -138,7 +139,7 @@ export default function Workspace({
   const pendingImagesRef = useRef<{ nodeId: string; image: ImageReference }[]>(
     [],
   );
-  const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [propertiesOpen, setPropertiesOpen] = useState(true);
 
   const [savedDocument, setSavedDocument] = useState(initialDocument);
   const [isSaving, setIsSaving] = useState(false);
@@ -234,8 +235,24 @@ export default function Workspace({
   });
 
   useEffect(() => {
+    // 아직 움직이지 않아 캡처하지 않은 클릭도 뷰포트 밖에서 놓으면 정리한다.
+    function endPendingNodeDrag(event: PointerEvent) {
+      const gesture = gestureRef.current;
+      if (
+        gesture?.kind === "node" &&
+        !gesture.moved &&
+        gesture.pointerId === event.pointerId
+      )
+        clearGesture();
+    }
     window.addEventListener("blur", clearGesture);
-    return () => window.removeEventListener("blur", clearGesture);
+    window.addEventListener("pointerup", endPendingNodeDrag);
+    window.addEventListener("pointercancel", endPendingNodeDrag);
+    return () => {
+      window.removeEventListener("blur", clearGesture);
+      window.removeEventListener("pointerup", endPendingNodeDrag);
+      window.removeEventListener("pointercancel", endPendingNodeDrag);
+    };
   }, [clearGesture]);
 
   useEffect(() => {
@@ -483,7 +500,7 @@ export default function Workspace({
   }
 
   function startNodeDrag(
-    event: ReactPointerEvent<HTMLButtonElement>,
+    event: ReactPointerEvent<HTMLElement>,
     node: WorkspaceNode,
   ) {
     const viewport = viewportRef.current;
@@ -504,11 +521,10 @@ export default function Workspace({
       : [node];
 
     viewport.focus({ preventScroll: true });
-    viewport.setPointerCapture(event.pointerId);
-
     dispatchHistory({ type: "begin" });
     gestureRef.current = {
       kind: "node",
+      moved: false,
       pointerId: event.pointerId,
       startPointer: {
         x: event.clientX,
@@ -651,6 +667,13 @@ export default function Workspace({
 
     const deltaX = event.clientX - gesture.startPointer.x;
     const deltaY = event.clientY - gesture.startPointer.y;
+
+    // 클릭·더블클릭 때는 원래 제목 바가 이벤트를 받도록 캡처를 미룬다.
+    if (gesture.kind === "node" && !gesture.moved) {
+      if (Math.hypot(deltaX, deltaY) < 3) return;
+      gesture.moved = true;
+      viewportRef.current?.setPointerCapture(event.pointerId);
+    }
 
     if (gesture.kind === "pan") {
       setCamera((current) => ({
@@ -1354,9 +1377,9 @@ export default function Workspace({
             )}
           </div>
         </div>
-        <WorkspaceInspector
+        <WorkspaceProperties
           infinite={!!workspace.canvas.infinite}
-          open={inspectorOpen}
+          open={propertiesOpen}
           node={selectedNode}
           selectionCount={selectedNodeIds.length}
           uploading={
@@ -1364,7 +1387,7 @@ export default function Workspace({
               ? (imageUploads.states[selectedNode.id]?.uploading ?? false)
               : false
           }
-          onToggle={() => setInspectorOpen((open) => !open)}
+          onToggle={() => setPropertiesOpen((open) => !open)}
           onChange={updateTextNode}
           onTransform={updateNodeTransform}
           onEditStart={beginTextEdit}
