@@ -1,62 +1,75 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type SubmitEvent } from "react";
+import { useRef, useState, type SubmitEvent } from "react";
 import { authClient } from "@/lib/auth-client";
+import { primaryButton } from "@/features/shell/styles";
+import AuthField, { fieldErrors } from "./auth-field";
 import { signupSchema } from "./signup-schema";
 
 export default function SignupForm() {
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const [errorMessage, setErrorMessage] = useState("");
   const [isComplete, setIsComplete] = useState(false);
+  const submitting = useRef(false);
 
   async function handleSubmit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
-
-    if (isSubmitting) return;
-
+    if (submitting.current) return;
     setErrorMessage("");
 
     const form = event.currentTarget;
     const formData = new FormData(form);
-
     const result = signupSchema.safeParse({
       name: formData.get("name"),
       email: formData.get("email"),
       password: formData.get("password"),
       confirmPassword: formData.get("confirmPassword"),
     });
-
     if (!result.success) {
-      setErrorMessage(result.error.issues[0].message);
+      setErrors(fieldErrors(result.error.issues));
       return;
     }
+    setErrors({});
 
+    submitting.current = true;
     setIsSubmitting(true);
-
     try {
       const { error } = await authClient.signUp.email({
         name: result.data.name,
         email: result.data.email,
         password: result.data.password,
       });
-
       if (error) {
         setErrorMessage(
           error.status === 429
             ? "요청이 너무 많습니다. 잠시 후 다시 시도해주세요."
-            : "회원가입을 처리하지 못했습니다. 입력 내용을 확인해주세요.",
+            : "회원가입을 처리하지 못했습니다. 이미 가입한 이메일인지 확인하거나 다른 이메일로 시도해주세요.",
         );
         return;
       }
 
+      // 서버는 가입 시 자동 로그인을 하지 않는다(auth.ts). 같은 입력으로 바로 로그인해
+      // 정보를 다시 입력하지 않고 대시보드로 이어지게 한다.
+      try {
+        const signIn = await authClient.signIn.email({
+          email: result.data.email,
+          password: result.data.password,
+        });
+        if (!signIn.error) {
+          window.location.replace("/dashboard");
+          return;
+        }
+      } catch {
+        // 아래 완료 안내로 대신한다.
+      }
       form.reset();
       setIsComplete(true);
     } catch {
-      setErrorMessage(
-        "서버에 연결하지 못했습니다. 잠시 후 다시 시도해주세요.",
-      );
+      setErrorMessage("서버에 연결하지 못했습니다. 잠시 후 다시 시도해주세요.");
     } finally {
+      submitting.current = false;
       setIsSubmitting(false);
     }
   }
@@ -64,89 +77,67 @@ export default function SignupForm() {
   if (isComplete) {
     return (
       <div role="status" className="space-y-4">
-        <p className="text-sm">
-          가입 요청을 처리했습니다. 로그인 화면에서 진행해주세요.
+        <p className="text-sm leading-6 text-bark-soft">
+          가입이 완료되었습니다. 로그인하면 바로 첫 프로젝트를 만들 수 있어요.
         </p>
-
-        <Link
-          href="/login"
-          className="inline-block rounded-lg bg-[#30382d] px-4 py-2 text-white hover:bg-[#434e3f]"
-        >
-          로그인으로 이동
+        <Link href="/login" className={`${primaryButton} w-full`}>
+          로그인하기
         </Link>
       </div>
     );
   }
 
-  const inputClassName =
-    "mb-5 block w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200";
-
   return (
     <form onSubmit={handleSubmit} noValidate className="w-full">
-      <fieldset disabled={isSubmitting} className="disabled:opacity-60">
-        <label htmlFor="name" className="sr-only">
-          이름
-        </label>
-        <input
-          className={inputClassName}
-          type="text"
-          placeholder="이름 입력"
+      <fieldset disabled={isSubmitting} className="space-y-5">
+        <AuthField
           id="name"
-          name="name"
+          label="이름"
+          type="text"
           autoComplete="name"
           required
+          error={errors.name}
         />
-
-        <label htmlFor="email" className="sr-only">
-          이메일
-        </label>
-        <input
-          className={inputClassName}
-          type="email"
-          placeholder="이메일 입력"
+        <AuthField
           id="email"
-          name="email"
+          label="이메일"
+          type="email"
+          placeholder="you@example.com"
           autoComplete="email"
           required
+          error={errors.email}
         />
-
-        <label htmlFor="password" className="sr-only">
-          비밀번호
-        </label>
-        <input
-          className={inputClassName}
-          type="password"
-          placeholder="비밀번호 입력"
+        <AuthField
           id="password"
-          name="password"
-          autoComplete="new-password"
-          required
-        />
-
-        <label htmlFor="confirmPassword" className="sr-only">
-          비밀번호 확인
-        </label>
-        <input
-          className={inputClassName}
+          label="비밀번호"
           type="password"
-          placeholder="비밀번호 확인"
+          autoComplete="new-password"
+          hint="8자 이상"
+          required
+          error={errors.password}
+        />
+        <AuthField
           id="confirmPassword"
-          name="confirmPassword"
+          label="비밀번호 확인"
+          type="password"
           autoComplete="new-password"
           required
+          error={errors.confirmPassword}
         />
-
         {errorMessage && (
-          <p role="alert" className="mb-4 text-sm text-red-600">
+          <p
+            role="alert"
+            className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600"
+          >
             {errorMessage}
           </p>
         )}
-
         <button
-          className="rounded-lg bg-[#30382d] px-4 py-2 text-white hover:bg-[#434e3f] disabled:cursor-wait"
           type="submit"
+          aria-busy={isSubmitting}
+          className={`${primaryButton} w-full ${isSubmitting ? "cursor-wait" : ""}`}
         >
-          {isSubmitting ? "등록 중…" : "등록"}
+          {isSubmitting ? "가입하는 중…" : "가입하고 시작하기"}
         </button>
       </fieldset>
     </form>

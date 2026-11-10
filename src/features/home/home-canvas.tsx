@@ -1,5 +1,13 @@
 "use client";
 
+import {
+  GripIcon,
+  ImageIcon,
+  ListIcon,
+  MinusIcon,
+  PlusIcon,
+  TextIcon,
+} from "@/features/workspace/icons";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { KeyboardEvent, PointerEvent } from "react";
 import styles from "./home.module.css";
@@ -261,7 +269,7 @@ export default function HomeCanvas() {
           <strong>체험용 캔버스</strong>
         </div>
         <span className={styles.demoBadge}>
-          <span /> LIVE PREVIEW
+          <span /> 체험 중
         </span>
       </div>
       <div
@@ -297,7 +305,7 @@ export default function HomeCanvas() {
             height={layout.height}
             className={styles.demoConnections}
             fill="none"
-            stroke="#9AA58A"
+            stroke="var(--color-lichen)"
             strokeWidth="1.5"
             aria-hidden="true"
           >
@@ -328,10 +336,12 @@ export default function HomeCanvas() {
               aria-label="프로젝트 메모 이동"
               title="드래그 또는 방향키로 이동"
             >
-              <span className={styles.noteIcon}>Aa</span>
+              <span className={styles.noteIcon} aria-hidden="true">
+                <TextIcon size={14} />
+              </span>
               <span>프로젝트 메모</span>
               <span className={styles.dragDots} aria-hidden="true">
-                ⠿
+                <GripIcon size={16} />
               </span>
             </button>
             <textarea
@@ -342,9 +352,7 @@ export default function HomeCanvas() {
               onChange={(event) => setNote(event.target.value)}
               spellCheck={false}
             />
-            <span className={styles.editHint}>
-              클릭해서 내용 수정 <span aria-hidden="true">↗</span>
-            </span>
+            <span className={styles.editHint}>클릭해서 내용 수정</span>
             {ports("idea")}
           </article>
           <article
@@ -359,10 +367,12 @@ export default function HomeCanvas() {
               aria-label="이미지 노트 이동"
               title="드래그 또는 방향키로 이동"
             >
-              <span className={styles.imageIcon}>▧</span>
+              <span className={styles.imageIcon} aria-hidden="true">
+                <ImageIcon size={14} />
+              </span>
               <span>참고 이미지</span>
               <span className={styles.dragDots} aria-hidden="true">
-                ⠿
+                <GripIcon size={16} />
               </span>
             </button>
             <div className={styles.landscape}>
@@ -389,7 +399,6 @@ export default function HomeCanvas() {
                   fill="none"
                 />
               </svg>
-              <span>REFERENCE IMAGE</span>
             </div>
             {ports("image")}
           </article>
@@ -405,10 +414,12 @@ export default function HomeCanvas() {
               aria-label="작업 목록 이동"
               title="드래그 또는 방향키로 이동"
             >
-              <span className={styles.nextIcon}>↗</span>
+              <span className={styles.nextIcon} aria-hidden="true">
+                <ListIcon size={14} />
+              </span>
               <span>작업 목록</span>
               <span className={styles.dragDots} aria-hidden="true">
-                ⠿
+                <GripIcon size={16} />
               </span>
             </button>
             <p>
@@ -446,7 +457,7 @@ export default function HomeCanvas() {
             onClick={() => zoomBy(1 / 1.2)}
             disabled={camera.zoom <= 0.35}
           >
-            −
+            <MinusIcon />
           </button>
           <span aria-live="polite">{Math.round(camera.zoom * 100)}%</span>
           <button
@@ -455,7 +466,7 @@ export default function HomeCanvas() {
             onClick={() => zoomBy(1.2)}
             disabled={camera.zoom >= 1.8}
           >
-            +
+            <PlusIcon />
           </button>
           <span className={styles.toolDivider} />
           <button

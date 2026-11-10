@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { authClient } from "@/lib/auth-client";
+import { textLink } from "@/features/shell/styles";
 
 export default function LogoutButton() {
   const [pending, setPending] = useState(false);
@@ -27,20 +28,20 @@ export default function LogoutButton() {
     }
   }
   return (
-    <div>
+    <div className="flex items-center gap-3">
+      {errorMessage && (
+        <p role="alert" className="text-xs text-red-600">
+          {errorMessage}
+        </p>
+      )}
       <button
         onClick={logout}
         type="button"
         disabled={pending}
-        className="rounded-lg border border-neutral-300 bg-white px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-100 disabled:opacity-50"
+        className={`${textLink} disabled:opacity-50`}
       >
         {pending ? "로그아웃 중…" : "로그아웃"}
       </button>
-      {errorMessage && (
-        <p role="alert" className="mt-2 text-sm text-red-600">
-          {errorMessage}
-        </p>
-      )}
     </div>
   );
 }

@@ -66,7 +66,7 @@ export default function DeleteProjectForm({
         aria-label={`${projectTitle} 삭제`}
         title={pending ? "삭제 중…" : "프로젝트 삭제"}
         aria-busy={pending}
-        className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-neutral-400 hover:bg-red-50 hover:text-red-600 focus-visible:outline-2 focus-visible:outline-red-500 disabled:cursor-wait disabled:opacity-50"
+        className="relative z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-lichen hover:bg-red-50 hover:text-red-600 focus-visible:outline-2 focus-visible:outline-red-600 disabled:cursor-wait disabled:opacity-50"
       >
         <svg
           width="16"

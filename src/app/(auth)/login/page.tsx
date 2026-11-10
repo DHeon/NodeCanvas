@@ -1,8 +1,11 @@
-import Link from "next/link";
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import AuthShell from "@/features/auth/auth-shell";
 import LoginForm from "@/features/auth/login-form";
 import { getLoginDestination } from "@/features/auth/login-destination";
 import { getSession } from "@/lib/session";
+
+export const metadata: Metadata = { title: "로그인 · nono" };
 
 export default async function LoginPage({
   searchParams,
@@ -13,17 +16,16 @@ export default async function LoginPage({
   if (await getSession()) redirect(destination);
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center bg-[#f8f9f4] px-6 py-12 text-neutral-900 [color-scheme:light]">
-      <div className="flex w-full max-w-80 flex-col items-start">
-        <Link
-          href="/"
-          className="mb-3 flex h-6 w-16 items-center justify-center rounded-full border border-neutral-300 bg-white text-xs text-neutral-600 hover:bg-neutral-100"
-        >
-          이전
-        </Link>
-        <h1 className="pb-4 text-2xl font-semibold">로그인</h1>
-        <LoginForm destination={destination} />
-      </div>
-    </main>
+    <AuthShell
+      title="로그인"
+      description="이어서 생각을 정리할 작업 공간으로 돌아가요."
+      alternate={{
+        prompt: "아직 계정이 없나요?",
+        href: "/signup",
+        label: "회원가입",
+      }}
+    >
+      <LoginForm destination={destination} />
+    </AuthShell>
   );
 }

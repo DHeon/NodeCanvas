@@ -1,13 +1,15 @@
 "use client";
 
-import Link from "next/link";
 import { useRef, useState, type SubmitEvent } from "react";
 import { authClient } from "@/lib/auth-client";
+import { primaryButton } from "@/features/shell/styles";
+import AuthField, { fieldErrors } from "./auth-field";
 import { loginSchema } from "./login-schema";
 import { getLoginDestination } from "./login-destination";
 
 export default function LoginForm({ destination }: { destination: string }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const [errorMessage, setErrorMessage] = useState("");
   const submitting = useRef(false);
 
@@ -21,14 +23,15 @@ export default function LoginForm({ destination }: { destination: string }) {
       password: formData.get("password"),
     });
     if (!result.success) {
-      setErrorMessage(result.error.issues[0].message);
+      setErrors(fieldErrors(result.error.issues));
       return;
     }
+    setErrors({});
 
     submitting.current = true;
     setIsSubmitting(true);
     try {
-      const { error } = await authClient.signIn.email(result.data);  //이메일을 통해 로그인 요청을 보냄
+      const { error } = await authClient.signIn.email(result.data); // 이메일로 로그인 요청
       if (error) {
         setErrorMessage(
           error.status === 429
@@ -49,52 +52,41 @@ export default function LoginForm({ destination }: { destination: string }) {
     }
   }
 
-  const inputClass =
-    "mb-5 block w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200";
   return (
     <form onSubmit={handleSubmit} noValidate className="w-full">
-      <fieldset disabled={isSubmitting} className="disabled:opacity-60">
-        <label htmlFor="email" className="sr-only">
-          이메일
-        </label>
-        <input
-          className={inputClass}
-          type="email"
+      <fieldset disabled={isSubmitting} className="space-y-5">
+        <AuthField
           id="email"
-          name="email"
-          placeholder="이메일 입력"
+          label="이메일"
+          type="email"
+          placeholder="you@example.com"
           autoComplete="username"
           required
+          error={errors.email}
         />
-        <label htmlFor="password" className="sr-only">
-          비밀번호
-        </label>
-        <input
-          className={inputClass}
-          type="password"
+        <AuthField
           id="password"
-          name="password"
-          placeholder="비밀번호 입력"
+          label="비밀번호"
+          type="password"
           autoComplete="current-password"
           required
+          error={errors.password}
         />
         {errorMessage && (
-          <p role="alert" className="mb-4 text-sm text-red-600">
+          <p
+            role="alert"
+            className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600"
+          >
             {errorMessage}
           </p>
         )}
         <button
           type="submit"
-          className="rounded-lg bg-[#30382d] px-4 py-2 text-white hover:bg-[#434e3f] disabled:cursor-wait"
+          aria-busy={isSubmitting}
+          className={`${primaryButton} w-full ${isSubmitting ? "cursor-wait" : ""}`}
         >
           {isSubmitting ? "로그인 중…" : "로그인"}
         </button>
-        <Link
-          href="/signup"
-          className="ml-4 text-sm text-neutral-600 underline underline-offset-4 hover:text-neutral-900"
-        >
-          회원가입
-        </Link>
       </fieldset>
     </form>
   );

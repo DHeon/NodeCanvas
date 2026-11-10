@@ -9,25 +9,29 @@ type RenameProjectFormProps = {
   projectId: string;
   projectTitle: string;
   children?: ReactNode;
+  /** 제목 아래 보조 정보 (노드 수, 수정 시각). */
+  meta?: string;
 };
 
 export default function RenameProjectForm({
   projectId,
   projectTitle,
   children,
+  meta,
 }: RenameProjectFormProps) {
-  const [editing, setEditing] = useState(false);      //제목 편집창으로 바꿀지 true, false
-  const [title, setTitle] = useState(projectTitle);  //사용자가 입력중인 title
-  const [error, setError] = useState("");           // 빈 이름, 서버 오류 등 
+  const [editing, setEditing] = useState(false); //제목 편집창으로 바꿀지 true, false
+  const [title, setTitle] = useState(projectTitle); //사용자가 입력중인 title
+  const [error, setError] = useState(""); // 빈 이름, 서버 오류 등
   const [pending, startTransition] = useTransition(); //저장 처리 중인가
-  const inputRef = useRef<HTMLInputElement>(null);  // 입력창 부분 DOM 
+  const inputRef = useRef<HTMLInputElement>(null); // 입력창 부분 DOM
   const editingRef = useRef(false); // 편집 가능 상태인지 확인
   const savingRef = useRef(false); // 이미 저장 요청 중인지 확인
-  const composingRef = useRef(false);  // 한글 입력시 조합완료 이벤트와 엔터 이벤트 중복 관련
+  const composingRef = useRef(false); // 한글 입력시 조합완료 이벤트와 엔터 이벤트 중복 관련
   const blurredDuringCompositionRef = useRef(false); //입력 중 다른 곳 클릭 하면 자동 저장
   const errorId = useId();
 
-  useEffect(() => {  // 편집 시작시 포커스 
+  useEffect(() => {
+    // 편집 시작시 포커스
     if (editing) {
       inputRef.current?.focus();
       inputRef.current?.select();
@@ -97,7 +101,7 @@ export default function RenameProjectForm({
   }
 
   return (
-    <div className="border-t border-neutral-200 px-4 py-3 text-neutral-600">
+    <div className="border-t border-rule-soft px-4 pt-3 pb-3.5 text-bark">
       <div className="flex min-h-7 flex-wrap items-center gap-2">
         {editing ? (
           <input
@@ -145,25 +149,25 @@ export default function RenameProjectForm({
                 cancelEditing();
               }
             }}
-            className="h-7 min-w-0 flex-1 rounded border border-violet-400 bg-white px-1.5 font-medium text-neutral-900 outline-none read-only:opacity-60 focus:ring-2 focus:ring-violet-200"
+            className="relative z-10 h-8 min-w-0 flex-1 rounded-md border border-moss-deep bg-white px-2 text-sm font-medium text-bark outline-none read-only:opacity-60 focus:ring-2 focus:ring-moss/30"
           />
         ) : (
           <>
-            <h3 className="min-w-0 flex-1 truncate font-medium">
+            <h2 className="min-w-0 flex-1 truncate text-sm font-medium">
               <Link
                 href={`/projects/${projectId}`}
                 title={projectTitle}
-                className="hover:text-neutral-900"
+                className="rounded-sm outline-none after:absolute after:inset-0 hover:text-ink focus-visible:underline focus-visible:underline-offset-4"
               >
                 {projectTitle}
               </Link>
-            </h3>
+            </h2>
             <button
               type="button"
               onClick={startEditing}
               aria-label={`${projectTitle} 이름 수정`}
               title="이름 수정"
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 focus-visible:outline-2 focus-visible:outline-violet-500"
+              className="relative z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-lichen hover:bg-mist hover:text-bark focus-visible:outline-2 focus-visible:outline-moss-deep"
             >
               <svg
                 width="16"
@@ -183,8 +187,11 @@ export default function RenameProjectForm({
           </>
         )}
       </div>
+      {meta && !editing && (
+        <p className="mt-0.5 text-xs text-lichen tabular-nums">{meta}</p>
+      )}
       {pending && (
-        <p role="status" className="mt-1 text-xs text-neutral-400">
+        <p role="status" className="mt-1 text-xs text-lichen">
           저장 중…
         </p>
       )}

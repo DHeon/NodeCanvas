@@ -1,26 +1,55 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* nono 세이지 체계 (DESIGN.md). 화면 모드와 무관한 고정 팔레트.
+   static: CSS 모듈·인라인 스타일에서 var(--color-*)로도 쓰므로 항상 내보낸다. */
+@theme static {
+  --color-ink: #30382d;
+  --color-ink-hover: #434e3f;
+  --color-moss: #97a87b;
+  --color-moss-deep: #7a8f52;
+  --color-moss-wash: #ecf1df;
+  --color-bark: #252c26;
+  --color-bark-soft: #46513d;
+  --color-lichen: #697164;
+  --color-paper: #f8f9f4;
+  --color-field: #f0f2e9;
+  --color-mist: #eef0e8;
+  --color-mist-deep: #e6e9de;
+  --color-rule: #d9ded1;
+  --color-rule-soft: #e9ece2;
+  --color-card-head: #fdfefb;
+  --color-sage-hover: #a1ad8c;
+  --color-sage-dot: #c5ccb6;
+  --color-ochre: #a88a60;
+  --color-ochre-wash: #eee9df;
+  --color-caution-wash: #fdf6ea;
+  --color-caution-rule: #f1d9b5;
+
+  --shadow-card: 0 7px 18px -10px #44523735;
+  --shadow-card-lift: 0 12px 26px -14px #44523755;
+  --shadow-card-selected: 0 0 0 3px #b6c79459, 0 12px 26px -14px #44523740;
+  --shadow-float: 0 16px 45px -12px #3445242e, 0 2px 5px #34452408;
+}
+
+::selection {
+  background: #d6dfc1;
+  color: #252c26;
+}
+
+/* nono는 밝은 종이 위 작업 책상 하나만 가진다. 다크 모드는 아직 설계하지 않았다. */
+:root {
+  color-scheme: light;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-geist-sans), sans-serif;
+  background: var(--color-paper);
+  color: var(--color-bark);
+  font-family:
+    var(--font-geist-sans), "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  word-break: keep-all;
 }
