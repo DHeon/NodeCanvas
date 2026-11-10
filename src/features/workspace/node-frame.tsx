@@ -66,7 +66,9 @@ export default function NodeFrame({
       ? "캔버스"
       : node.type === "image_node"
         ? "이미지"
-        : "텍스트";
+        : node.type === "link_node"
+          ? "링크"
+          : "텍스트";
   const placeholder = node.type === "text_node" ? "제목" : label;
   const [editingTitle, setEditingTitle] = useState(false);
   const titleInput = useRef<HTMLInputElement>(null);
@@ -217,7 +219,7 @@ export default function NodeFrame({
           type="button"
           data-connection-side={side}
           aria-label={`${labels[side]} 연결점`}
-          // 포인터 전용 손잡이. 키보드 연결은 속성 패널의 "연결"에서 한다.
+          // 포인터 전용 손잡이라 탭 순서에서 뺀다.
           tabIndex={-1}
           title={`${labels[side]} 연결점 · 다른 노드의 점 근처로 드래그해 연결`}
           onPointerDown={(event) => onConnectStart(event, node, side)}

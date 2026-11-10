@@ -1,5 +1,7 @@
 import type { ConnectionColor } from "./connection-colors";
 import type { ConnectionLineStyle } from "./connections";
+import type { TextStyle } from "./text-style";
+import type { LinkPreview } from "./link-embed";
 
 //좌표
 export type Point = {
@@ -26,6 +28,8 @@ export type NodeBase = {
 export type TextNode = NodeBase & {
   type: "text_node";
   text: string;
+  // 노드 글 전체의 스타일. 없으면 기본(고딕·보통·왼쪽·기본색).
+  textStyle?: TextStyle;
 };
 
 export type ImageReference = {
@@ -46,7 +50,14 @@ export type CanvasNode = NodeBase & {
   document: WorkspaceDocument;
 };
 
-export type WorkspaceNode = TextNode | ImageNode | CanvasNode;
+// 유튜브·웹페이지를 노드 안에 띄운다. url이 빈 문자열이면 아직 주소를 넣지 않은 상태.
+export type LinkNode = NodeBase & {
+  type: "link_node";
+  url: string;
+  preview?: LinkPreview;
+};
+
+export type WorkspaceNode = TextNode | ImageNode | CanvasNode | LinkNode;
 export type NodeTransformPatch = Partial<
   Point & { width: number; height: number }
 >;

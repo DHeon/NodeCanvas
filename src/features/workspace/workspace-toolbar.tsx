@@ -4,6 +4,7 @@ type WorkspaceToolbarProps = {
   onAddTextNode: () => void;
   onAddImageNode: () => void;
   onAddCanvasNode: () => void;
+  onAddLinkNode: () => void;
   canvasDepthLimit: boolean;
 };
 
@@ -11,6 +12,7 @@ export default function WorkspaceToolbar({
   onAddTextNode,
   onAddImageNode,
   onAddCanvasNode,
+  onAddLinkNode,
   canvasDepthLimit,
 }: WorkspaceToolbarProps) {
   return (
@@ -94,6 +96,28 @@ export default function WorkspaceToolbar({
           >
             <rect x="3" y="5" width="18" height="14" rx="3" />
             <path d="M10 15l5-5m-4 0h4v4" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          onClick={onAddLinkNode}
+          aria-label="링크 노드 추가"
+          title="링크 노드 추가 (L) · 유튜브·웹페이지"
+          className="flex h-10 w-10 items-center justify-center rounded-[11px] text-bark-soft hover:bg-bark/6 focus-visible:outline-2 focus-visible:outline-moss-deep active:bg-bark/10"
+        >
+          <svg
+            width="22"
+            height="22"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1" />
+            <path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1" />
           </svg>
         </button>
       </div>

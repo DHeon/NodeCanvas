@@ -1,6 +1,100 @@
 import { useRef, useState } from "react";
+import type {
+  NodeConnection,
+  NodeTransformPatch,
+  TextNodeContentPatch,
+  WorkspaceNode,
+} from "./types";
 import { ChevronLeftIcon, ChevronRightIcon } from "./icons";
 import { nodeDisplayName } from "./workspace-tree";
+import TextStyleSection from "./text-style-section";
+import { normalizeLinkUrl, parseYouTube } from "./link-embed";
+
+function LinkSection({
+  node,
+  loading,
+  onSetUrl,
+}: {
+  node: Extract<WorkspaceNode, { type: "link_node" }>;
+  loading: boolean;
+  onSetUrl: (nodeId: string, url: string) => void;
+}) {
+  const [draft, setDraft] = useState(node.url);
+  const [invalid, setInvalid] = useState(false);
+  const kind = !node.url
+    ? "주소를 넣으면 노드 안에 보여줘요."
+    : parseYouTube(node.url)
+      ? "유튜브 영상 · 노드 안에서 바로 재생돼요."
+      : node.preview?.embeddable
+        ? "웹페이지 · 노드 안에 페이지를 띄웠어요."
+        : node.preview
+          ? "이 사이트는 다른 페이지 안에 띄우는 걸 막아둬서 미리보기 카드로 보여줘요."
+          : "링크를 확인하는 중이에요.";
+  function apply() {
+    const url = normalizeLinkUrl(draft);
+    if (!url) {
+      setInvalid(true);
+      return;
+    }
+    setDraft(url);
+    if (url !== node.url) onSetUrl(node.id, url);
+  }
+  return (
+    <section className={sectionClass}>
+      <h3 className={headingClass}>링크</h3>
+      <label className="block space-y-1.5 text-xs text-lichen">
+        <span>주소</span>
+        <input
+          type="url"
+          inputMode="url"
+          spellCheck={false}
+          value={draft}
+          placeholder="https://"
+          aria-invalid={invalid || undefined}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            setInvalid(false);
+          }}
+          onBlur={() => {
+            if (draft.trim() && draft !== node.url) apply();
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+              event.preventDefault();
+              apply();
+            }
+          }}
+          className={`${inputClass} aria-invalid:border-red-600`}
+        />
+      </label>
+      {invalid && (
+        <p className="text-xs text-red-600">http·https 웹 주소를 넣어주세요.</p>
+      )}
+      <p className={hintClass}>{kind}</p>
+      {node.url && (
+        <div className="flex flex-wrap gap-2">
+          <a
+            href={node.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded-lg border border-rule bg-white px-3 py-1.5 text-xs text-bark hover:bg-mist focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-moss-deep"
+          >
+            새 탭에서 열기
+          </a>
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() => onSetUrl(node.id, node.url)}
+            className="rounded-lg border border-rule bg-white px-3 py-1.5 text-xs text-bark hover:bg-mist focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-moss-deep disabled:opacity-50"
+          >
+            {loading ? "확인 중…" : "다시 불러오기"}
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+import type { TextStyle } from "./text-style";
 import {
   CONNECTION_COLORS,
   connectionColor,
@@ -45,107 +139,12 @@ function ConnectionColorPicker({
     </fieldset>
   );
 }
-import type {
-  NodeConnection,
-  NodeTransformPatch,
-  TextNodeContentPatch,
-  WorkspaceNode,
-} from "./types";
 
 const inputClass =
   "w-full min-w-0 rounded-lg border border-rule bg-white px-2.5 py-2 text-sm text-bark tabular-nums outline-none focus:border-moss-deep focus:ring-2 focus:ring-moss/30";
 const sectionClass = "space-y-3 border-t border-rule-soft pt-5";
 const headingClass = "text-xs font-semibold text-bark-soft";
 const hintClass = "text-xs leading-5 break-keep text-lichen";
-
-function ConnectionSection({
-  node,
-  canvasNodes,
-  connections,
-  onConnect,
-  onDisconnect,
-}: {
-  node: WorkspaceNode;
-  canvasNodes: WorkspaceNode[];
-  connections: NodeConnection[];
-  onConnect: (sourceId: string, targetId: string) => void;
-  onDisconnect: (connectionId: string) => void;
-}) {
-  const byId = new Map(canvasNodes.map((item) => [item.id, item]));
-  const linked = connections.flatMap((connection) => {
-    const otherId =
-      connection.source.nodeId === node.id
-        ? connection.target.nodeId
-        : connection.target.nodeId === node.id
-          ? connection.source.nodeId
-          : null;
-    const other = otherId ? byId.get(otherId) : undefined;
-    return other ? [{ connection, other }] : [];
-  });
-  const linkedIds = new Set(linked.map(({ other }) => other.id));
-  const candidates = canvasNodes.filter(
-    (item) => item.id !== node.id && !linkedIds.has(item.id),
-  );
-  return (
-    <section className={sectionClass}>
-      <h3 className={headingClass}>연결</h3>
-      {linked.length > 0 ? (
-        <ul className="space-y-1.5">
-          {linked.map(({ connection, other }) => (
-            <li
-              key={connection.id}
-              className="flex items-center gap-2 rounded-lg border border-rule-soft bg-white px-2.5 py-1.5 text-sm"
-            >
-              <span
-                aria-hidden="true"
-                className="h-2.5 w-2.5 shrink-0 rounded-full"
-                style={{
-                  backgroundColor: connectionColor(connection.color).value,
-                }}
-              />
-              <span
-                className="min-w-0 flex-1 truncate"
-                title={nodeDisplayName(other)}
-              >
-                {nodeDisplayName(other)}
-              </span>
-              <button
-                type="button"
-                onClick={() => onDisconnect(connection.id)}
-                aria-label={`${nodeDisplayName(other)}와의 연결 끊기`}
-                title="연결 끊기"
-                className="shrink-0 rounded-md px-1.5 py-0.5 text-xs text-lichen hover:bg-red-50 hover:text-red-600 focus-visible:outline-2 focus-visible:outline-red-600"
-              >
-                끊기
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className={hintClass}>아직 연결된 노드가 없어요.</p>
-      )}
-      {candidates.length > 0 && (
-        <label className="block space-y-1.5 text-xs text-lichen">
-          <span>다른 노드와 연결</span>
-          <select
-            value=""
-            onChange={(event) => {
-              if (event.target.value) onConnect(node.id, event.target.value);
-            }}
-            className={`${inputClass} cursor-pointer`}
-          >
-            <option value="">노드 선택…</option>
-            {candidates.map((item) => (
-              <option key={item.id} value={item.id}>
-                {nodeDisplayName(item)}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
-    </section>
-  );
-}
 
 function NumberField({
   label,
@@ -222,12 +221,13 @@ type PropertiesProps = {
   onEditStart: () => void;
   onEditEnd: () => void;
   onChooseImage: (nodeId: string) => void;
+  onOpenImage: (nodeId: string) => void;
   onRemoveImage: (nodeId: string) => void;
+  onTextStyle: (nodeId: string, patch: TextStyle) => void;
+  onSetLinkUrl: (nodeId: string, url: string) => void;
+  linkLoading: boolean;
   onDelete: () => void;
   canvasNodes: WorkspaceNode[];
-  connections: NodeConnection[];
-  onConnect: (sourceId: string, targetId: string) => void;
-  onDisconnect: (connectionId: string) => void;
   selectedConnection: NodeConnection | undefined;
   onConnectionColor: (connectionId: string, color: ConnectionColor) => void;
   onReturnToCanvas: () => void;
@@ -245,12 +245,13 @@ export default function WorkspaceProperties({
   onEditStart,
   onEditEnd,
   onChooseImage,
+  onOpenImage,
   onRemoveImage,
+  onTextStyle,
+  onSetLinkUrl,
+  linkLoading,
   onDelete,
   canvasNodes,
-  connections,
-  onConnect,
-  onDisconnect,
   selectedConnection,
   onConnectionColor,
   onReturnToCanvas,
@@ -286,7 +287,9 @@ export default function WorkspaceProperties({
                   ? "텍스트 노드"
                   : node.type === "canvas_node"
                     ? "캔버스 노드"
-                    : "이미지 노드"
+                    : node.type === "link_node"
+                      ? "링크 노드"
+                      : "이미지 노드"
                 : selectedConnection
                   ? "연결선"
                   : "노드 설정"}
@@ -383,22 +386,38 @@ export default function WorkspaceProperties({
                   </p>
                 </section>
                 {node.type === "text_node" ? (
-                  <section className={sectionClass}>
-                    <h3 className={headingClass}>본문</h3>
-                    <textarea
-                      aria-label="텍스트 본문"
-                      spellCheck={false}
-                      value={node.text}
-                      maxLength={50000}
-                      rows={7}
-                      className={`${inputClass} resize-y`}
-                      onFocus={onEditStart}
-                      onBlur={onEditEnd}
-                      onChange={(event) =>
-                        onChange(node.id, { text: event.target.value })
-                      }
+                  <>
+                    <TextStyleSection
+                      nodeId={node.id}
+                      style={node.textStyle}
+                      onChange={onTextStyle}
+                      sectionClass={sectionClass}
+                      headingClass={headingClass}
                     />
-                  </section>
+                    <section className={sectionClass}>
+                      <h3 className={headingClass}>본문</h3>
+                      <textarea
+                        aria-label="텍스트 본문"
+                        spellCheck={false}
+                        value={node.text}
+                        maxLength={50000}
+                        rows={7}
+                        className={`${inputClass} resize-y`}
+                        onFocus={onEditStart}
+                        onBlur={onEditEnd}
+                        onChange={(event) =>
+                          onChange(node.id, { text: event.target.value })
+                        }
+                      />
+                    </section>
+                  </>
+                ) : node.type === "link_node" ? (
+                  <LinkSection
+                    key={`${node.id}:${node.url}`}
+                    node={node}
+                    loading={linkLoading}
+                    onSetUrl={onSetLinkUrl}
+                  />
                 ) : node.type === "image_node" ? (
                   <section className={sectionClass}>
                     <h3 className={headingClass}>이미지</h3>
@@ -416,6 +435,14 @@ export default function WorkspaceProperties({
                     </button>
                     {node.image && (
                       <>
+                        <button
+                          type="button"
+                          disabled={uploading}
+                          onClick={() => onOpenImage(node.id)}
+                          className={`${inputClass} text-left hover:bg-mist disabled:opacity-50`}
+                        >
+                          크게 보기
+                        </button>
                         <p className="text-xs leading-5 text-lichen tabular-nums">
                           {node.image.width} × {node.image.height}px ·{" "}
                           {Math.ceil(node.image.byteLength / 1024)}KB
@@ -441,13 +468,6 @@ export default function WorkspaceProperties({
                     올라올 수 있어요.
                   </p>
                 )}
-                <ConnectionSection
-                  node={node}
-                  canvasNodes={canvasNodes}
-                  connections={connections}
-                  onConnect={onConnect}
-                  onDisconnect={onDisconnect}
-                />
               </>
             )}
           </div>

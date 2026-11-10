@@ -23,6 +23,11 @@ import ImageNodeView from "./image-node-view";
 import CanvasNodeView from "./canvas-node-view";
 import { ArrowLeftIcon, MinusIcon, PlusIcon } from "./icons";
 import ConflictPanel from "./conflict-panel";
+import ImageViewer from "./image-viewer";
+import LinkNodeView from "./link-node-view";
+import useLinkPreviews from "./use-link-previews";
+import { normalizeLinkUrl } from "./link-embed";
+import { mergeTextStyle, type TextStyle } from "./text-style";
 import ShortcutHelp from "./shortcut-help";
 import { useAutosave } from "./use-autosave";
 import { countNodes, duplicateNodes } from "./node-clone";
@@ -51,7 +56,6 @@ import {
   getConnectionKey,
   getConnectionPoint,
   MAX_CONNECTIONS,
-  pickFacingSides,
 } from "./connections";
 import {
   createWorkspaceHistory,
@@ -71,6 +75,7 @@ import type {
   NodeConnection,
   Point,
   WorkspaceNode,
+  ImageNode,
   ImageReference,
   NodeTransformPatch,
   TextNodeContentPatch,
@@ -257,6 +262,8 @@ export default function Workspace({
   const [conflictBusy, setConflictBusy] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const [notice, setNotice] = useState("");
+  // 크게 보기 중인 이미지 노드. 다른 공간으로 가거나 노드가 사라지면 자동으로 닫힌다.
+  const [viewerNodeId, setViewerNodeId] = useState<string | null>(null);
   const savingRef = useRef(false);
   const documentVersionRef = useRef(initialVersion);
   const unconfirmedSaveRef = useRef<{
@@ -375,6 +382,32 @@ export default function Workspace({
       viewport.releasePointerCapture(gesture.pointerId);
     }
   }, []);
+
+  // 미리보기는 요청한 공간·주소의 노드에만 적용한다. 제목이 비어 있으면 페이지 제목으로 채운다.
+  const linkPreviews = useLinkPreviews((nodeId, url, preview, path) => {
+    dispatchHistory({
+      type: "change",
+      update: (root) =>
+        updateWorkspaceAtPath(root, path, (document) => {
+          let changed = false;
+          const nodes = document.nodes.map((node) => {
+            if (
+              node.id !== nodeId ||
+              node.type !== "link_node" ||
+              node.url !== url
+            )
+              return node;
+            changed = true;
+            return {
+              ...node,
+              preview,
+              title: node.title || (preview.title ?? "").slice(0, 200),
+            };
+          });
+          return changed ? { ...document, nodes } : document;
+        }),
+    });
+  });
 
   const imageUploads = useImageUploads(projectId, (nodeId, image, path) => {
     if (gestureRef.current) {
@@ -830,6 +863,7 @@ export default function Workspace({
         if (nodeId) chooseImage(nodeId);
       },
       c: () => addNode("canvas_node"),
+      l: () => addNode("link_node"),
     };
     const action =
       zoomActions[key] ?? (event.shiftKey ? undefined : createActions[key]);
@@ -904,43 +938,6 @@ export default function Workspace({
     setSelectedNodeIds(copies.nodes.map((node) => node.id));
   }
 
-  /** 키보드·Properties에서 두 노드를 마주 보는 변끼리 잇는다. */
-  function connectNodes(sourceId: string, targetId: string) {
-    if (gestureRef.current || sourceId === targetId) return;
-    const source = workspace.nodes.find((node) => node.id === sourceId);
-    const target = workspace.nodes.find((node) => node.id === targetId);
-    if (!source || !target) return;
-    const sides = pickFacingSides(source, target);
-    const connection: NodeConnection = {
-      id: uuidv4(),
-      source: { nodeId: sourceId, side: sides.source },
-      target: { nodeId: targetId, side: sides.target },
-    };
-    const key = getConnectionKey(connection);
-    if (
-      workspace.connections.some(
-        (existing) =>
-          getConnectionKey(existing) === key ||
-          (existing.source.nodeId === sourceId &&
-            existing.target.nodeId === targetId) ||
-          (existing.source.nodeId === targetId &&
-            existing.target.nodeId === sourceId),
-      )
-    ) {
-      setNotice("두 노드는 이미 연결되어 있어요.");
-      return;
-    }
-    if (workspace.connections.length >= MAX_CONNECTIONS) {
-      setNotice(`연결선은 한 공간에 ${MAX_CONNECTIONS}개까지 만들 수 있어요.`);
-      return;
-    }
-    dispatchHistory({ type: "commit" });
-    setWorkspace((current) => ({
-      ...current,
-      connections: [...current.connections, connection],
-    }));
-  }
-
   function changeView(
     patch: Pick<WorkspaceDocument["canvas"], "lineStyle" | "grid">,
   ) {
@@ -966,18 +963,6 @@ export default function Workspace({
         return next;
       }),
     }));
-  }
-
-  function removeConnection(connectionId: string) {
-    if (gestureRef.current) return;
-    dispatchHistory({ type: "commit" });
-    setWorkspace((current) => ({
-      ...current,
-      connections: current.connections.filter(
-        (connection) => connection.id !== connectionId,
-      ),
-    }));
-    if (selectedConnectionId === connectionId) setSelectedConnectionId(null);
   }
 
   function startNodeDrag(
@@ -1354,12 +1339,19 @@ export default function Workspace({
       return null;
     }
     const rect = viewport.getBoundingClientRect();
+    // 링크 노드는 16:9 영상(480×270)에 제목 바 48px를 더한 크기로 시작한다.
+    const size = {
+      text_node: [320, 220],
+      image_node: [360, 280],
+      canvas_node: [260, 140],
+      link_node: [480, 318],
+    }[type];
     const width = Math.min(
-      type === "image_node" ? 360 : type === "canvas_node" ? 260 : 320,
+      size[0],
       workspace.canvas.infinite ? 10000 : workspace.canvas.width,
     );
     const height = Math.min(
-      type === "image_node" ? 280 : type === "canvas_node" ? 140 : 220,
+      size[1],
       workspace.canvas.infinite ? 10000 : workspace.canvas.height,
     );
     const centerX = (rect.width / 2 - camera.x) / camera.zoom;
@@ -1385,20 +1377,22 @@ export default function Workspace({
         );
     const base = { id: uuidv4(), position: { x, y }, width, height, title: "" };
     const node: WorkspaceNode =
-      type === "image_node"
-        ? { ...base, type, image: null }
-        : type === "canvas_node"
-          ? {
-              ...base,
-              type,
-              title: "새 작업 공간",
-              // 새 하위 공간은 지금 공간의 보기 설정(선 모양·점 배경)을 물려받는다.
-              document: inheritViewSettings(
-                createWorkspace(),
-                workspace.canvas,
-              ),
-            }
-          : { ...base, type, text: "" };
+      type === "link_node"
+        ? { ...base, type, url: "" }
+        : type === "image_node"
+          ? { ...base, type, image: null }
+          : type === "canvas_node"
+            ? {
+                ...base,
+                type,
+                title: "새 작업 공간",
+                // 새 하위 공간은 지금 공간의 보기 설정(선 모양·점 배경)을 물려받는다.
+                document: inheritViewSettings(
+                  createWorkspace(),
+                  workspace.canvas,
+                ),
+              }
+            : { ...base, type, text: "" };
     setWorkspace((current) => ({
       ...current,
       nodes: [...current.nodes, node],
@@ -1483,6 +1477,11 @@ export default function Workspace({
       navigateCanvas([...canvasPath.slice(0, activeDepth), nodeId]);
   }
 
+  function openImageViewer(nodeId: string) {
+    if (gestureRef.current) return;
+    setViewerNodeId(nodeId);
+  }
+
   function chooseImage(nodeId: string) {
     imageTargetRef.current = { nodeId, path: canvasPath.slice(0, activeDepth) };
     fileInputRef.current?.click();
@@ -1498,7 +1497,17 @@ export default function Workspace({
     const file = Array.from(event.clipboardData.files).find((file) =>
       file.type.startsWith("image/"),
     );
-    if (!file) return;
+    if (!file) {
+      // 웹 주소 하나를 붙여넣으면 링크 노드로 만든다.
+      // 일반 글을 붙여넣은 것과 구분하려고 http(s)://로 시작하는 주소만 받는다.
+      const text = event.clipboardData.getData("text/plain").trim();
+      const url = /^https?:\/\//i.test(text) ? normalizeLinkUrl(text) : null;
+      if (!url) return;
+      event.preventDefault();
+      const nodeId = addNode("link_node");
+      if (nodeId) setLinkUrl(nodeId, url, { commit: false });
+      return;
+    }
     event.preventDefault();
     const selected =
       selectedNodeIds.length === 1
@@ -1510,9 +1519,48 @@ export default function Workspace({
       void imageUploads.upload(nodeId, file, canvasPath.slice(0, activeDepth));
   }
 
+  /** 링크 노드의 주소를 정하고 서버에 미리보기를 요청한다. */
+  function setLinkUrl(
+    nodeId: string,
+    url: string,
+    { commit = true }: { commit?: boolean } = {},
+  ) {
+    if (gestureRef.current) return;
+    if (commit) dispatchHistory({ type: "commit" });
+    setWorkspace((current) => ({
+      ...current,
+      nodes: current.nodes.map((node) => {
+        if (node.id !== nodeId || node.type !== "link_node") return node;
+        const next = { ...node, url };
+        delete next.preview;
+        return next;
+      }),
+    }));
+    void linkPreviews.load(nodeId, url, canvasPath.slice(0, activeDepth));
+  }
+
   function updateNodeTransform(nodeId: string, patch: NodeTransformPatch) {
     if (!gestureRef.current)
       setWorkspace((current) => transformNode(current, nodeId, patch));
+  }
+
+  function updateTextStyle(nodeId: string, patch: TextStyle) {
+    if (gestureRef.current) return;
+    dispatchHistory({ type: "commit" });
+    setWorkspace((current) => {
+      let changed = false;
+      const nodes = current.nodes.map((node) => {
+        if (node.id !== nodeId || node.type !== "text_node") return node;
+        const textStyle = mergeTextStyle(node.textStyle, patch);
+        if (JSON.stringify(textStyle) === JSON.stringify(node.textStyle))
+          return node;
+        changed = true;
+        const next = { ...node, textStyle };
+        if (!textStyle) delete next.textStyle;
+        return next;
+      });
+      return changed ? { ...current, nodes } : current;
+    });
   }
 
   function removeNodeImage(nodeId: string) {
@@ -1694,6 +1742,10 @@ export default function Workspace({
     24 * 2 ** Math.max(0, Math.ceil(Math.log2(0.5 / camera.zoom)));
   const dotRadius = Math.max(0.8, camera.zoom);
   const showGrid = workspace.canvas.grid !== false;
+  const viewerNode = workspace.nodes.find(
+    (node): node is ImageNode & { image: ImageReference } =>
+      node.id === viewerNodeId && node.type === "image_node" && !!node.image,
+  );
   const selectedConnection = selectedConnectionId
     ? workspace.connections.find(
         (connection) => connection.id === selectedConnectionId,
@@ -1970,6 +2022,7 @@ export default function Workspace({
           onAddTextNode={addTextNode}
           onAddImageNode={() => addNode("image_node")}
           onAddCanvasNode={() => addNode("canvas_node")}
+          onAddLinkNode={() => addNode("link_node")}
           canvasDepthLimit={activeDepth >= MAX_CANVAS_DEPTH}
         />
         <div
@@ -2054,6 +2107,15 @@ export default function Workspace({
               };
               return node.type === "text_node" ? (
                 <TextNodeView key={node.id} {...frame} node={node} />
+              ) : node.type === "link_node" ? (
+                <LinkNodeView
+                  key={node.id}
+                  {...frame}
+                  node={node}
+                  loading={linkPreviews.states[node.id]?.loading ?? false}
+                  error={linkPreviews.states[node.id]?.error ?? ""}
+                  onSetUrl={setLinkUrl}
+                />
               ) : node.type === "canvas_node" ? (
                 <CanvasNodeView
                   key={node.id}
@@ -2070,6 +2132,7 @@ export default function Workspace({
                   uploading={imageUploads.states[node.id]?.uploading ?? false}
                   error={imageUploads.states[node.id]?.error ?? ""}
                   onChooseImage={chooseImage}
+                  onOpenImage={openImageViewer}
                 />
               );
             })}
@@ -2113,6 +2176,14 @@ export default function Workspace({
             </div>
           )}
         </div>
+        {viewerNode && (
+          <ImageViewer
+            key={viewerNode.image.id}
+            projectId={projectId}
+            node={viewerNode}
+            onClose={() => setViewerNodeId(null)}
+          />
+        )}
         <WorkspaceProperties
           infinite={!!workspace.canvas.infinite}
           open={propertiesOpen}
@@ -2129,14 +2200,19 @@ export default function Workspace({
           onEditStart={beginTextEdit}
           onEditEnd={endTextEdit}
           onChooseImage={chooseImage}
+          onOpenImage={openImageViewer}
           onRemoveImage={removeNodeImage}
+          onTextStyle={updateTextStyle}
+          onSetLinkUrl={setLinkUrl}
+          linkLoading={
+            selectedNode?.type === "link_node"
+              ? (linkPreviews.states[selectedNode.id]?.loading ?? false)
+              : false
+          }
           onDelete={deleteSelection}
           canvasNodes={workspace.nodes}
-          connections={workspace.connections}
           selectedConnection={selectedConnection}
           onConnectionColor={setConnectionColor}
-          onConnect={connectNodes}
-          onDisconnect={removeConnection}
           onReturnToCanvas={() =>
             viewportRef.current?.focus({ preventScroll: true })
           }

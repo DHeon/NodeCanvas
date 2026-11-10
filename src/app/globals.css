@@ -1,8 +1,13 @@
 @import "tailwindcss";
 
 @theme inline {
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans:
+    var(--font-geist-sans), "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  /* Geist Mono에 없는 한글은 나눔고딕코딩으로 */
+  --font-mono: var(--font-geist-mono), var(--font-nanum-coding), monospace;
+  --font-serif: var(--font-gowun-batang), "AppleMyungjo", "Batang", serif;
+  --font-hand: var(--font-gaegu), var(--font-geist-sans), cursive;
+  --font-code: var(--font-nanum-coding), var(--font-geist-mono), monospace;
 }
 
 /* nono 세이지 체계 (DESIGN.md). 화면 모드와 무관한 고정 팔레트.

@@ -1,11 +1,13 @@
 import NodeFrame, { type NodeFrameProps } from "./node-frame";
 import type { TextNode } from "./types";
+import { resolveTextStyle } from "./text-style";
 
 type TextNodeViewProps = Omit<NodeFrameProps, "node" | "children"> & {
   node: TextNode;
 };
 
 export default function TextNodeView({ node, ...frame }: TextNodeViewProps) {
+  const style = resolveTextStyle(node.textStyle);
   return (
     <NodeFrame {...frame} node={node}>
       <textarea
@@ -22,7 +24,8 @@ export default function TextNodeView({ node, ...frame }: TextNodeViewProps) {
         onChange={(event) =>
           frame.onChange(node.id, { text: event.target.value })
         }
-        className="min-h-0 w-full flex-1 resize-none overflow-y-auto overscroll-contain p-4 text-sm leading-6 break-keep outline-none placeholder:text-lichen focus-visible:ring-2 focus-visible:ring-moss focus-visible:ring-inset"
+        style={{ color: style.color.value }}
+        className={`min-h-0 w-full flex-1 resize-none overflow-y-auto overscroll-contain p-4 break-keep outline-none placeholder:text-lichen focus-visible:ring-2 focus-visible:ring-moss focus-visible:ring-inset ${style.font.className} ${style.size.className} ${style.align.className} ${style.bold ? "font-semibold" : ""}`}
       />
     </NodeFrame>
   );

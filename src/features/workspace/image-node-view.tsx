@@ -1,5 +1,5 @@
 import Image from "next/image";
-import { PlusIcon } from "./icons";
+import { ExpandIcon, PlusIcon } from "./icons";
 import NodeFrame, { type NodeFrameProps } from "./node-frame";
 import type { ImageNode } from "./types";
 
@@ -9,6 +9,7 @@ type ImageNodeViewProps = Omit<NodeFrameProps, "node" | "children"> & {
   uploading: boolean;
   error: string;
   onChooseImage: (nodeId: string) => void;
+  onOpenImage: (nodeId: string) => void;
 };
 
 export default function ImageNodeView({
@@ -17,11 +18,33 @@ export default function ImageNodeView({
   uploading,
   error,
   onChooseImage,
+  onOpenImage,
   ...frame
 }: ImageNodeViewProps) {
   return (
     <NodeFrame {...frame} node={node}>
-      <div className="relative flex min-h-0 flex-1 items-center justify-center bg-paper p-2">
+      <div
+        className={`relative flex min-h-0 flex-1 items-center justify-center bg-paper p-2 select-none ${node.image ? "cursor-zoom-in" : ""}`}
+        title={node.image ? "더블클릭해서 크게 보기" : undefined}
+        onDoubleClick={(event) => {
+          if (!node.image || uploading) return;
+          event.stopPropagation();
+          // 더블클릭이 남긴 글자 선택을 지워 보기 창에 선택 표시가 번지지 않게 한다.
+          window.getSelection()?.removeAllRanges();
+          onOpenImage(node.id);
+        }}
+      >
+        {node.image && !uploading && (
+          <button
+            type="button"
+            onClick={() => onOpenImage(node.id)}
+            aria-label={`${node.title.trim() || "이미지"} 크게 보기`}
+            title="크게 보기"
+            className="absolute top-2 right-2 z-10 hidden h-7 w-7 place-items-center rounded-md bg-white/90 text-bark-soft shadow-card group-focus-within/node:grid group-hover/node:grid hover:bg-white hover:text-bark focus-visible:grid focus-visible:outline-2 focus-visible:outline-moss-deep"
+          >
+            <ExpandIcon size={14} />
+          </button>
+        )}
         {node.image ? (
           <Image
             key={node.image.id}

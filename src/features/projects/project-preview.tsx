@@ -46,6 +46,7 @@ const fill: Record<string, string> = {
   text_node: "#ffffff",
   image_node: "var(--color-ochre-wash)",
   canvas_node: "var(--color-moss-wash)",
+  link_node: "var(--color-mist)",
 };
 
 export default function ProjectPreview({ nodes }: { nodes: PreviewNode[] }) {

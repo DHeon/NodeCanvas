@@ -108,28 +108,6 @@ export function findConnectionTarget(
   return nearest;
 }
 
-/** 키보드로 연결할 때 두 노드의 상대 위치로 마주 보는 변을 고른다. */
-export function pickFacingSides(
-  source: WorkspaceNode,
-  target: WorkspaceNode,
-): { source: ConnectionSide; target: ConnectionSide } {
-  const dx =
-    target.position.x +
-    target.width / 2 -
-    (source.position.x + source.width / 2);
-  const dy =
-    target.position.y +
-    target.height / 2 -
-    (source.position.y + source.height / 2);
-  if (Math.abs(dx) >= Math.abs(dy))
-    return dx >= 0
-      ? { source: "right", target: "left" }
-      : { source: "left", target: "right" };
-  return dy >= 0
-    ? { source: "bottom", target: "top" }
-    : { source: "top", target: "bottom" };
-}
-
 export type ConnectionLineStyle = "curved" | "orthogonal";
 
 const ORTHOGONAL_STUB = 24; // 연결점에서 수직으로 빠져나오는 길이

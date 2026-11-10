@@ -3,6 +3,13 @@ import { z } from "zod";
 import type { WorkspaceDocument } from "./types";
 import { getConnectionKey, MAX_CONNECTIONS } from "./connections";
 import { CONNECTION_COLOR_KEYS } from "./connection-colors";
+import { MAX_LINK_URL_LENGTH, normalizeLinkUrl } from "./link-embed";
+import {
+  TEXT_ALIGN_KEYS,
+  TEXT_COLOR_KEYS,
+  TEXT_FONT_KEYS,
+  TEXT_SIZE_KEYS,
+} from "./text-style";
 import {
   MAX_CANVAS_DEPTH,
   MAX_WORKSPACE_NODES,
@@ -22,9 +29,18 @@ const nodeBaseSchema = z.strictObject({
   title: z.string().max(200),
 });
 
+const textStyleSchema = z.strictObject({
+  font: z.enum(TEXT_FONT_KEYS).optional(),
+  size: z.enum(TEXT_SIZE_KEYS).optional(),
+  bold: z.boolean().optional(),
+  align: z.enum(TEXT_ALIGN_KEYS).optional(),
+  color: z.enum(TEXT_COLOR_KEYS).optional(),
+});
+
 const textNodeSchema = nodeBaseSchema.extend({
   type: z.literal("text_node"),
   text: z.string().max(50000),
+  textStyle: textStyleSchema.optional(),
 });
 
 export const imageReferenceSchema = z.strictObject({
@@ -41,6 +57,34 @@ export const imageReferenceSchema = z.strictObject({
 const imageNodeSchema = nodeBaseSchema.extend({
   type: z.literal("image_node"),
   image: imageReferenceSchema.nullable(),
+});
+
+const optionalText = (max: number) => z.string().max(max).optional();
+const linkNodeSchema = nodeBaseSchema.extend({
+  type: z.literal("link_node"),
+  // 빈 문자열은 "아직 주소 없음". 그 밖에는 http(s) 주소만 저장한다.
+  url: z
+    .string()
+    .max(MAX_LINK_URL_LENGTH)
+    .refine((value) => value === "" || normalizeLinkUrl(value) === value, {
+      message: "링크 주소가 올바르지 않습니다.",
+    }),
+  preview: z
+    .strictObject({
+      embeddable: z.boolean(),
+      title: optionalText(200),
+      description: optionalText(300),
+      image: z
+        .string()
+        .max(MAX_LINK_URL_LENGTH)
+        .refine(
+          (value) =>
+            value.startsWith("https://") || value.startsWith("http://"),
+        )
+        .optional(),
+      siteName: optionalText(100),
+    })
+    .optional(),
 });
 
 const endpointSchema = z.strictObject({
@@ -62,12 +106,17 @@ function documentSchemaAtDepth(depth: number): z.ZodType<WorkspaceDocument> {
       ? z.discriminatedUnion("type", [
           textNodeSchema,
           imageNodeSchema,
+          linkNodeSchema,
           nodeBaseSchema.extend({
             type: z.literal("canvas_node"),
             document: documentSchemaAtDepth(depth + 1),
           }),
         ])
-      : z.discriminatedUnion("type", [textNodeSchema, imageNodeSchema]);
+      : z.discriminatedUnion("type", [
+          textNodeSchema,
+          imageNodeSchema,
+          linkNodeSchema,
+        ]);
   return z
     .strictObject({
       canvas: z.strictObject({
