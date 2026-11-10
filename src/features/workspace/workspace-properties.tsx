@@ -131,7 +131,9 @@ export default function WorkspaceProperties({
               {node
                 ? node.type === "text_node"
                   ? "텍스트"
-                  : "이미지"
+                  : node.type === "canvas_node"
+                    ? "캔버스"
+                    : "이미지"
                 : "노드 설정"}
             </h2>
           </header>
@@ -228,7 +230,7 @@ export default function WorkspaceProperties({
                       }
                     />
                   </section>
-                ) : (
+                ) : node.type === "image_node" ? (
                   <section className="space-y-3 border-t border-neutral-200 pt-5">
                     <h3 className="text-xs font-semibold text-neutral-500">
                       이미지
@@ -271,6 +273,10 @@ export default function WorkspaceProperties({
                       이미지 비율을 유지하여 표시·크기 조절합니다.
                     </p>
                   </section>
+                ) : (
+                  <p className="border-t border-neutral-200 pt-5 text-xs leading-5 text-neutral-500">
+                    캔버스 노드의 열기 버튼으로 하위 작업 공간에 들어갑니다.
+                  </p>
                 )}
               </>
             )}

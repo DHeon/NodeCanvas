@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { appOrigins } from "@/lib/app-origins";
 import { createWorkspace } from "@/features/workspace/create-workspace";
 import { workspaceDocumentSchema } from "@/features/workspace/workspace-schema";
+import { walkWorkspaceNodes } from "@/features/workspace/workspace-tree";
 
 export const runtime = "nodejs";
 
@@ -165,7 +166,7 @@ export async function PUT(request: Request, { params }: DocumentRouteContext) {
 
     const { document, expectedVersion } = result.data;
 
-    const imageNodes = document.nodes.filter(
+    const imageNodes = [...walkWorkspaceNodes(document)].filter(
       (node) => node.type === "image_node",
     );
     const imageIds = [

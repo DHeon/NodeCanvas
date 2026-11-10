@@ -61,7 +61,13 @@ export default function NodeFrame({
   onEditEnd,
   children,
 }: NodeFrameProps) {
-  const label = node.type === "image_node" ? "이미지" : "텍스트";
+  const label =
+    node.type === "canvas_node"
+      ? "캔버스"
+      : node.type === "image_node"
+        ? "이미지"
+        : "텍스트";
+  const placeholder = node.type === "text_node" ? "제목" : label;
   const [editingTitle, setEditingTitle] = useState(false);
   const titleInput = useRef<HTMLInputElement>(null);
   const titleBar = useRef<HTMLElement>(null);
@@ -144,7 +150,7 @@ export default function NodeFrame({
               ref={titleInput}
               aria-label={`${label} 노드 제목`}
               spellCheck={false}
-              placeholder={label === "이미지" ? "이미지" : "제목"}
+              placeholder={placeholder}
               maxLength={200}
               value={node.title}
               onFocus={() => {
@@ -177,7 +183,7 @@ export default function NodeFrame({
             <span
               className={`min-w-0 flex-1 truncate text-sm font-medium ${node.title ? "" : "text-neutral-400"}`}
             >
-              {node.title || (node.type === "image_node" ? "이미지" : "제목")}
+              {node.title || placeholder}
             </span>
           )}
         </header>

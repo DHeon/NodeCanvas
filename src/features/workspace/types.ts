@@ -37,7 +37,13 @@ export type ImageNode = NodeBase & {
   image: ImageReference | null;
 };
 
-export type WorkspaceNode = TextNode | ImageNode;
+// 캔버스 노드 ID는 현재 공간에서 하위 문서를 찾는 경로가 된다.
+export type CanvasNode = NodeBase & {
+  type: "canvas_node";
+  document: WorkspaceDocument;
+};
+
+export type WorkspaceNode = TextNode | ImageNode | CanvasNode;
 export type NodeTransformPatch = Partial<
   Point & { width: number; height: number }
 >;

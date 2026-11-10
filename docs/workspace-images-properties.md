@@ -20,7 +20,7 @@
 
 ## 구조
 
-- `types.ts`: `WorkspaceNode = TextNode | ImageNode` 판별 유니온. 문서에는 이미지 본문 대신 `ImageReference`(UUID·너비·높이·바이트 수)만 넣는다.
+- `types.ts`: `WorkspaceNode = TextNode | ImageNode | CanvasNode` 판별 유니온(캔버스 노드는 `workspace-nested-canvas.md` 참고). 문서에는 이미지 본문 대신 `ImageReference`(UUID·너비·높이·바이트 수)만 넣는다.
 - `node-frame.tsx`: 노드 제목·이동·크기 조절·선택·연결점 공통 UI. 종류별 본문은 `text-node-view.tsx`, `image-node-view.tsx`가 담당한다.
 - `node-transform.ts`: Properties 좌표/크기 제한, 이미지 비율 계산, 이미지 교체를 순수 함수로 처리한다.
 - `workspace-properties.tsx`: 공통 설정 및 종류별 설정 UI. 문서 상태는 직접 소유하지 않고 Workspace의 수정 함수를 호출한다.

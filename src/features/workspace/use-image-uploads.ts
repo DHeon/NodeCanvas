@@ -27,7 +27,11 @@ export async function uploadWorkspaceImage(
 
 export default function useImageUploads(
   projectId: string,
-  onUploaded: (nodeId: string, image: ImageReference) => void,
+  onUploaded: (
+    nodeId: string,
+    image: ImageReference,
+    path: readonly string[],
+  ) => void,
 ) {
   const controllers = useRef(new Map<string, AbortController>());
   const [states, setStates] = useState<
@@ -40,7 +44,7 @@ export default function useImageUploads(
       pending.clear();
     };
   }, []);
-  async function upload(nodeId: string, file: File) {
+  async function upload(nodeId: string, file: File, path: readonly string[]) {
     controllers.current.get(nodeId)?.abort();
     const controller = new AbortController();
     controllers.current.set(nodeId, controller);
@@ -59,7 +63,7 @@ export default function useImageUploads(
         controller.signal,
       );
       if (controllers.current.get(nodeId) === controller)
-        onUploaded(nodeId, image);
+        onUploaded(nodeId, image, path);
     } catch (error) {
       if (controllers.current.get(nodeId) !== controller) return;
       setStates((current) => ({

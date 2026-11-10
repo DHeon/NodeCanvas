@@ -2,7 +2,14 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { v4 as uuidv4 } from "uuid";
 import type {
   KeyboardEvent as ReactKeyboardEvent,
@@ -11,6 +18,7 @@ import type {
 } from "react";
 import TextNodeView from "./text-node-view";
 import ImageNodeView from "./image-node-view";
+import CanvasNodeView from "./canvas-node-view";
 import WorkspaceProperties from "./workspace-properties";
 import useImageUploads from "./use-image-uploads";
 import { fitNodeSize, replaceNodeImage, transformNode } from "./node-transform";
@@ -18,7 +26,15 @@ import WorkspaceToolbar from "./workspace-toolbar";
 import WorkspaceMenu from "./workspace-menu";
 import { applyCanvasSettings, getFitCamera } from "./canvas-settings";
 import ConnectionLayer from "./connection-layer";
-import { expandLegacyCanvas } from "./create-workspace";
+import { createWorkspace, expandLegacyCanvas } from "./create-workspace";
+import {
+  canvasNodeTitle,
+  MAX_CANVAS_DEPTH,
+  MAX_WORKSPACE_NODES,
+  resolveWorkspacePath,
+  updateWorkspaceAtPath,
+  walkWorkspaceNodes,
+} from "./workspace-tree";
 import {
   findConnectionTarget,
   getConnectionKey,
@@ -113,16 +129,34 @@ export default function Workspace({
     initialDocument,
     (document) => createWorkspaceHistory(expandLegacyCanvas(document)),
   );
-  const workspace = history.present;
+  const rootDocument = history.present;
+  const [canvasPath, setCanvasPath] = useState<string[]>([]);
+  const { document: workspace, trail } = resolveWorkspacePath(
+    rootDocument,
+    canvasPath,
+  );
+  const activeDepth = trail.length;
+  const canvasKey = canvasPath.slice(0, activeDepth).join("/");
+  const currentCanvas = trail.at(-1);
+  // Undo로 현재 캔버스가 사라지면 남아 있는 가장 가까운 상위 공간을 연다.
+  // 렌더 중에 조정해 effect로 인한 연쇄 렌더를 피한다.
+  if (canvasPath.length !== activeDepth) {
+    setCanvasPath(canvasPath.slice(0, activeDepth));
+  }
+
   const workspaceRef = useRef(workspace);
-  useEffect(() => {
+  useLayoutEffect(() => {
     workspaceRef.current = workspace;
   }, [workspace]);
   const setWorkspace = useCallback(
     (update: (document: WorkspaceDocument) => WorkspaceDocument) => {
-      dispatchHistory({ type: "change", update });
+      dispatchHistory({
+        type: "change",
+        update: (root) =>
+          updateWorkspaceAtPath(root, canvasPath.slice(0, activeDepth), update),
+      });
     },
-    [],
+    [canvasPath, activeDepth],
   );
 
   const [camera, setCamera] = useState<Camera>({
@@ -130,15 +164,23 @@ export default function Workspace({
     y: 32,
     zoom: 0.5,
   });
+  const latestCameraRef = useRef(camera);
+  const previousCanvasKeyRef = useRef<string | null>(null);
+  const canvasCamerasRef = useRef(new Map<string, Camera>());
+  useLayoutEffect(() => {
+    latestCameraRef.current = camera;
+  }, [camera]);
 
   const viewportRef = useRef<HTMLDivElement>(null); // DOM관련 크기 측정, 이벤트 연결할 때
   const gestureRef = useRef<Gesture | null>(null); //드래그 시작 시 위치와 어떤거 이동할지
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const imageTargetRef = useRef<string | null>(null);
-  const pendingImagesRef = useRef<{ nodeId: string; image: ImageReference }[]>(
-    [],
+  const imageTargetRef = useRef<{ nodeId: string; path: string[] } | null>(
+    null,
   );
+  const pendingImagesRef = useRef<
+    { nodeId: string; image: ImageReference; path: readonly string[] }[]
+  >([]);
   const [propertiesOpen, setPropertiesOpen] = useState(true);
 
   const [savedDocument, setSavedDocument] = useState(initialDocument);
@@ -151,7 +193,7 @@ export default function Workspace({
     document: WorkspaceDocument;
     version: number;
   } | null>(null);
-  const hasUnsavedChanges = workspace !== savedDocument;
+  const hasUnsavedChanges = rootDocument !== savedDocument;
 
   // 미저장 이탈 경고만 유지한다. 브라우저에 문서를 저장하지는 않는다.
   useEffect(() => {
@@ -175,7 +217,8 @@ export default function Workspace({
   );
   const [isPanning, setIsPanning] = useState(false); //드래그 상태따라 커서 변경
   const hasPendingEdit =
-    history.transactionStart !== null && history.transactionStart !== workspace;
+    history.transactionStart !== null &&
+    history.transactionStart !== rootDocument;
   const canUndo = history.past.length > 0 || hasPendingEdit;
   const canRedo = history.future.length > 0 && !hasPendingEdit;
 
@@ -190,11 +233,7 @@ export default function Workspace({
     if (width <= 0 || height <= 0) return;
 
     setCamera(getFitCamera(workspaceRef.current, width, height));
-  }, [
-    workspace.canvas.width,
-    workspace.canvas.height,
-    workspace.canvas.infinite,
-  ]);
+  }, []);
 
   // 드래그 정리
   const clearGesture = useCallback(() => {
@@ -210,10 +249,13 @@ export default function Workspace({
       dispatchHistory({ type: "commit" });
     }
 
-    for (const { nodeId, image } of pendingImagesRef.current) {
+    for (const { nodeId, image, path } of pendingImagesRef.current) {
       dispatchHistory({
         type: "change",
-        update: (document) => replaceNodeImage(document, nodeId, image),
+        update: (root) =>
+          updateWorkspaceAtPath(root, path, (document) =>
+            replaceNodeImage(document, nodeId, image),
+          ),
       });
     }
     pendingImagesRef.current = [];
@@ -223,13 +265,19 @@ export default function Workspace({
     }
   }, []);
 
-  const imageUploads = useImageUploads(projectId, (nodeId, image) => {
+  const imageUploads = useImageUploads(projectId, (nodeId, image, path) => {
     if (gestureRef.current) {
-      pendingImagesRef.current.push({ nodeId, image });
+      pendingImagesRef.current.push({ nodeId, image, path });
       return;
     }
     dispatchHistory({ type: "commit" });
-    setWorkspace((current) => replaceNodeImage(current, nodeId, image));
+    dispatchHistory({
+      type: "change",
+      update: (root) =>
+        updateWorkspaceAtPath(root, path, (current) =>
+          replaceNodeImage(current, nodeId, image),
+        ),
+    });
     if (document.activeElement?.matches("input, textarea"))
       dispatchHistory({ type: "begin" });
   });
@@ -255,13 +303,31 @@ export default function Workspace({
     };
   }, [clearGesture]);
 
-  useEffect(() => {
-    //viewportRef의 크기가 바뀌면 fitCanvas
+  useLayoutEffect(() => {
     const viewport = viewportRef.current;
 
     if (!viewport) return;
 
+    const previousKey = previousCanvasKeyRef.current;
+    const switchedCanvas = previousKey !== canvasKey;
+    if (switchedCanvas && previousKey !== null) {
+      canvasCamerasRef.current.set(previousKey, latestCameraRef.current);
+    }
+    previousCanvasKeyRef.current = canvasKey;
+
+    const savedCamera = switchedCanvas
+      ? canvasCamerasRef.current.get(canvasKey)
+      : undefined;
+    if (savedCamera) setCamera(savedCamera);
+    else fitCanvas();
+
+    let lastSize = viewport.getBoundingClientRect();
     const observer = new ResizeObserver(() => {
+      const size = viewport.getBoundingClientRect();
+      // 관찰을 시작할 때 오는 첫 알림으로 복원한 화면을 덮어쓰지 않는다.
+      if (size.width === lastSize.width && size.height === lastSize.height)
+        return;
+      lastSize = size;
       fitCanvas();
     });
 
@@ -270,7 +336,13 @@ export default function Workspace({
     return () => {
       observer.disconnect();
     };
-  }, [fitCanvas]);
+  }, [
+    canvasKey,
+    fitCanvas,
+    workspace.canvas.width,
+    workspace.canvas.height,
+    workspace.canvas.infinite,
+  ]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -859,15 +931,20 @@ export default function Workspace({
   }
   function addNode(type: WorkspaceNode["type"]) {
     const viewport = viewportRef.current;
-    if (!viewport || gestureRef.current || workspace.nodes.length >= 1000)
+    if (
+      !viewport ||
+      gestureRef.current ||
+      (type === "canvas_node" && activeDepth >= MAX_CANVAS_DEPTH) ||
+      [...walkWorkspaceNodes(rootDocument)].length >= MAX_WORKSPACE_NODES
+    )
       return null;
     const rect = viewport.getBoundingClientRect();
     const width = Math.min(
-      type === "image_node" ? 360 : 320,
+      type === "image_node" ? 360 : type === "canvas_node" ? 260 : 320,
       workspace.canvas.infinite ? 10000 : workspace.canvas.width,
     );
     const height = Math.min(
-      type === "image_node" ? 280 : 220,
+      type === "image_node" ? 280 : type === "canvas_node" ? 140 : 220,
       workspace.canvas.infinite ? 10000 : workspace.canvas.height,
     );
     const centerX = (rect.width / 2 - camera.x) / camera.zoom;
@@ -895,7 +972,14 @@ export default function Workspace({
     const node: WorkspaceNode =
       type === "image_node"
         ? { ...base, type, image: null }
-        : { ...base, type, text: "" };
+        : type === "canvas_node"
+          ? {
+              ...base,
+              type,
+              title: "새 작업 공간",
+              document: createWorkspace(),
+            }
+          : { ...base, type, text: "" };
     setWorkspace((current) => ({
       ...current,
       nodes: [...current.nodes, node],
@@ -914,8 +998,26 @@ export default function Workspace({
     addNode("text_node");
   }
 
+  function navigateCanvas(path: string[]) {
+    if (gestureRef.current) return;
+    viewportRef.current?.focus({ preventScroll: true });
+    dispatchHistory({ type: "commit" });
+    setSelectedNodeIds([]);
+    setSelectedConnectionId(null);
+    setCanvasPath(path);
+  }
+
+  function openCanvas(nodeId: string) {
+    if (
+      workspace.nodes.some(
+        (node) => node.id === nodeId && node.type === "canvas_node",
+      )
+    )
+      navigateCanvas([...canvasPath.slice(0, activeDepth), nodeId]);
+  }
+
   function chooseImage(nodeId: string) {
-    imageTargetRef.current = nodeId;
+    imageTargetRef.current = { nodeId, path: canvasPath.slice(0, activeDepth) };
     fileInputRef.current?.click();
   }
 
@@ -937,7 +1039,8 @@ export default function Workspace({
         : undefined;
     const nodeId =
       selected?.type === "image_node" ? selected.id : addNode("image_node");
-    if (nodeId) void imageUploads.upload(nodeId, file);
+    if (nodeId)
+      void imageUploads.upload(nodeId, file, canvasPath.slice(0, activeDepth));
   }
 
   function updateNodeTransform(nodeId: string, patch: NodeTransformPatch) {
@@ -983,6 +1086,19 @@ export default function Workspace({
     )
       return;
 
+    if (
+      workspace.nodes.some(
+        (node) =>
+          node.type === "canvas_node" &&
+          node.document.nodes.length > 0 &&
+          selectedNodeIds.includes(node.id),
+      ) &&
+      !window.confirm(
+        "선택한 캔버스 노드와 그 안의 작업 공간을 함께 삭제할까요? 실행 취소로 되돌릴 수 있습니다.",
+      )
+    )
+      return;
+
     // 버튼이 삭제 후 비활성화돼도 포커스가 body로 빠지지 않아 Ctrl+Z가 이어진다.
     viewportRef.current?.focus({ preventScroll: true });
 
@@ -1023,7 +1139,7 @@ export default function Workspace({
     savingRef.current = true;
     setIsSaving(true);
     setSaveError("");
-    const documentToSave = workspace;
+    const documentToSave = rootDocument;
 
     try {
       // 응답을 놓친 저장은 사용자 재시도 시에만 서버 상태를 확인한다.
@@ -1104,10 +1220,11 @@ export default function Workspace({
         aria-label="이미지 파일 선택"
         onChange={(event) => {
           const file = event.target.files?.[0];
-          const nodeId = imageTargetRef.current;
+          const target = imageTargetRef.current;
           event.target.value = "";
           imageTargetRef.current = null;
-          if (nodeId && file) void imageUploads.upload(nodeId, file);
+          if (target && file)
+            void imageUploads.upload(target.nodeId, file, target.path);
         }}
       />
       <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-3 border-b border-neutral-300 bg-white px-4 py-2">
@@ -1130,7 +1247,8 @@ export default function Workspace({
         </Link>
 
         <h1 className="min-w-0 flex-1 truncate text-sm font-medium">
-          작업 공간 · {projectTitle}
+          작업 공간 ·{" "}
+          {currentCanvas ? canvasNodeTitle(currentCanvas) : projectTitle}
         </h1>
 
         <span className="ml-auto shrink-0 text-sm text-neutral-500">
@@ -1254,7 +1372,56 @@ export default function Workspace({
           </p>
         )}
       </header>
+      {currentCanvas && (
+        <nav
+          aria-label="작업 공간 경로"
+          className="flex shrink-0 items-center gap-3 overflow-x-auto border-b border-neutral-200 bg-white px-4 py-2 text-xs"
+        >
+          <button
+            type="button"
+            onClick={() => navigateCanvas(canvasPath.slice(0, activeDepth - 1))}
+            className="shrink-0 rounded-md bg-neutral-100 px-2.5 py-1.5 font-medium text-neutral-700 hover:bg-neutral-200"
+          >
+            ← 상위 작업 공간
+          </button>
+          <ol className="flex shrink-0 items-center gap-2 text-neutral-500">
+            <li>
+              <button
+                type="button"
+                onClick={() => navigateCanvas([])}
+                className="max-w-44 truncate align-middle hover:text-neutral-900"
+              >
+                {projectTitle}
+              </button>
+            </li>
+            {trail.map((node, index) => (
+              <li key={node.id} className="flex items-center gap-2">
+                <span aria-hidden="true">/</span>
+                {index === activeDepth - 1 ? (
+                  <span
+                    aria-current="location"
+                    className="max-w-44 truncate font-medium text-neutral-800"
+                  >
+                    {canvasNodeTitle(node)}
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      navigateCanvas(canvasPath.slice(0, index + 1))
+                    }
+                    className="max-w-44 truncate hover:text-neutral-900"
+                  >
+                    {canvasNodeTitle(node)}
+                  </button>
+                )}
+              </li>
+            ))}
+          </ol>
+        </nav>
+      )}
       <WorkspaceMenu
+        key={canvasKey}
         canvas={workspace.canvas}
         onApply={(canvas) => {
           if (gestureRef.current) return "드래그를 마친 뒤 다시 시도해주세요.";
@@ -1270,6 +1437,8 @@ export default function Workspace({
         <WorkspaceToolbar
           onAddTextNode={addTextNode}
           onAddImageNode={() => addNode("image_node")}
+          onAddCanvasNode={() => addNode("canvas_node")}
+          canvasDepthLimit={activeDepth >= MAX_CANVAS_DEPTH}
         />
         <div
           ref={viewportRef}
@@ -1350,6 +1519,13 @@ export default function Workspace({
               };
               return node.type === "text_node" ? (
                 <TextNodeView key={node.id} {...frame} node={node} />
+              ) : node.type === "canvas_node" ? (
+                <CanvasNodeView
+                  key={node.id}
+                  {...frame}
+                  node={node}
+                  onOpen={openCanvas}
+                />
               ) : (
                 <ImageNodeView
                   key={node.id}

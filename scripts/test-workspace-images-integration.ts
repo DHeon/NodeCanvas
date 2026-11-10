@@ -197,6 +197,34 @@ async function main() {
       400,
       "finite document rejects out-of-bounds positions",
     );
+    const nested = createWorkspace();
+    nested.nodes = [
+      {
+        id: randomUUID(),
+        type: "canvas_node",
+        title: "하위 작업 공간",
+        position: { x: 100, y: 100 },
+        width: 260,
+        height: 140,
+        document: infiniteDocument,
+      },
+    ];
+    assert.equal((await save(a.projectId, a.cookie, nested, 4)).status, 200);
+    const nestedLoaded = await (
+      await request(`/api/projects/${a.projectId}/document`, a.cookie)
+    ).json();
+    assert.equal(nestedLoaded.documentVersion, 5);
+    assert.deepEqual(nestedLoaded.document, nested);
+    assert.equal(
+      (await save(b.projectId, b.cookie, nested, 0)).status,
+      400,
+      "cross-project image references are also rejected inside child canvases",
+    );
+    assert.equal(
+      (await save(a.projectId, a.cookie, nested, 4)).status,
+      409,
+      "nested canvases preserve project-wide version protection",
+    );
     await pool.query('DELETE FROM project WHERE id=$1 AND "ownerId"=$2', [
       a.projectId,
       a.id,
@@ -207,7 +235,7 @@ async function main() {
     );
     assert.equal(count.rows[0].count, "0");
     console.log(
-      "PASS: image upload, authentication, owner/origin/size/type checks, DB storage, document reload, image undo retention and project cascade",
+      "PASS: image upload, authentication, owner/origin/size/type checks, nested canvas storage and reload, save conflict protection, image undo retention and project cascade",
     );
   } finally {
     if (users.length)
