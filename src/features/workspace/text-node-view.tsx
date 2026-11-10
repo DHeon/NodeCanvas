@@ -22,7 +22,7 @@ export default function TextNodeView({ node, ...frame }: TextNodeViewProps) {
         onChange={(event) =>
           frame.onChange(node.id, { text: event.target.value })
         }
-        className="min-h-0 w-full flex-1 resize-none overflow-y-auto overscroll-contain p-4 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 focus-visible:ring-inset"
+        className="min-h-0 w-full flex-1 resize-none overflow-y-auto overscroll-contain p-4 text-sm leading-6 break-keep outline-none placeholder:text-lichen focus-visible:ring-2 focus-visible:ring-moss focus-visible:ring-inset"
       />
     </NodeFrame>
   );

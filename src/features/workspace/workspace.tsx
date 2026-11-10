@@ -2,10 +2,12 @@
 
 import Link from "next/link";
 import Image from "next/image";
+import { useSearchParams } from "next/navigation";
 import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useReducer,
   useRef,
   useState,
@@ -19,6 +21,15 @@ import type {
 import TextNodeView from "./text-node-view";
 import ImageNodeView from "./image-node-view";
 import CanvasNodeView from "./canvas-node-view";
+import { ArrowLeftIcon, MinusIcon, PlusIcon } from "./icons";
+import ConflictPanel from "./conflict-panel";
+import ShortcutHelp from "./shortcut-help";
+import { useAutosave } from "./use-autosave";
+import { countNodes, duplicateNodes } from "./node-clone";
+import {
+  DEFAULT_CONNECTION_COLOR,
+  type ConnectionColor,
+} from "./connection-colors";
 import WorkspaceProperties from "./workspace-properties";
 import useImageUploads from "./use-image-uploads";
 import { fitNodeSize, replaceNodeImage, transformNode } from "./node-transform";
@@ -40,6 +51,7 @@ import {
   getConnectionKey,
   getConnectionPoint,
   MAX_CONNECTIONS,
+  pickFacingSides,
 } from "./connections";
 import {
   createWorkspaceHistory,
@@ -115,8 +127,43 @@ type Gesture =
     };
 
 type SelectionRect = Point & { width: number; height: number };
+
+function inheritViewSettings(
+  document: WorkspaceDocument,
+  parent: WorkspaceDocument["canvas"],
+): WorkspaceDocument {
+  const canvas = { ...document.canvas };
+  if (parent.lineStyle) canvas.lineStyle = parent.lineStyle;
+  if (parent.grid !== undefined) canvas.grid = parent.grid;
+  return { ...document, canvas };
+}
+
+function writeCanvasPath(path: readonly string[], mode: "push" | "replace") {
+  const params = new URLSearchParams(window.location.search);
+  if (path.length) params.set("canvas", path.join("."));
+  else params.delete("canvas");
+  const query = params.toString();
+  const url = query ? `?${query}` : window.location.pathname;
+  if (mode === "push") window.history.pushState(null, "", url);
+  else window.history.replaceState(null, "", url);
+}
+
+const NUDGE_STEP = 8;
+const NUDGE_STEP_LARGE = 40;
+const ZOOM_MIN = 0.1;
+const ZOOM_MAX = 2;
+const timeFormat = new Intl.DateTimeFormat("ko", {
+  hour: "2-digit",
+  minute: "2-digit",
+});
 const iconButtonClassName =
-  "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded border border-neutral-300 hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-500 disabled:cursor-not-allowed disabled:opacity-40";
+  "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-rule bg-white text-bark-soft hover:bg-mist focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-moss-deep active:bg-mist-deep disabled:cursor-not-allowed disabled:opacity-40";
+const zoomButtonClassName =
+  "inline-flex h-8 w-8 items-center justify-center text-bark-soft first:rounded-l-lg last:rounded-r-lg hover:bg-mist focus-visible:outline-2 focus-visible:outline-moss-deep";
+const quietButtonClassName =
+  "shrink-0 rounded-lg border border-rule bg-white px-3 py-1.5 text-sm hover:bg-mist focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-moss-deep active:bg-mist-deep";
+// 캔버스 점 격자 색: 세이지 바탕(field) 위에서 보일 만큼만.
+const GRID_DOT_COLOR = "var(--color-sage-dot)";
 
 export default function Workspace({
   projectId,
@@ -130,7 +177,14 @@ export default function Workspace({
     (document) => createWorkspaceHistory(expandLegacyCanvas(document)),
   );
   const rootDocument = history.present;
-  const [canvasPath, setCanvasPath] = useState<string[]>([]);
+  // 현재 하위 캔버스 경로는 URL(?canvas=a.b)에 둔다. 브라우저 뒤로 가기가 한 단계 위로
+  // 올라가고, 새로고침·링크 공유에도 같은 공간이 열린다.
+  const searchParams = useSearchParams();
+  const canvasParam = searchParams.get("canvas") ?? "";
+  const canvasPath = useMemo(
+    () => (canvasParam ? canvasParam.split(".") : []),
+    [canvasParam],
+  );
   const { document: workspace, trail } = resolveWorkspacePath(
     rootDocument,
     canvasPath,
@@ -138,11 +192,11 @@ export default function Workspace({
   const activeDepth = trail.length;
   const canvasKey = canvasPath.slice(0, activeDepth).join("/");
   const currentCanvas = trail.at(-1);
-  // Undo로 현재 캔버스가 사라지면 남아 있는 가장 가까운 상위 공간을 연다.
-  // 렌더 중에 조정해 effect로 인한 연쇄 렌더를 피한다.
-  if (canvasPath.length !== activeDepth) {
-    setCanvasPath(canvasPath.slice(0, activeDepth));
-  }
+  // Undo나 잘못된 주소로 경로의 캔버스가 없으면 남아 있는 가장 가까운 상위 공간으로 주소를 고친다.
+  useEffect(() => {
+    if (canvasPath.length !== activeDepth)
+      writeCanvasPath(canvasPath.slice(0, activeDepth), "replace");
+  }, [canvasPath, activeDepth]);
 
   const workspaceRef = useRef(workspace);
   useLayoutEffect(() => {
@@ -172,6 +226,17 @@ export default function Workspace({
   }, [camera]);
 
   const viewportRef = useRef<HTMLDivElement>(null); // DOM관련 크기 측정, 이벤트 연결할 때
+  const focusAfterRenderRef = useRef<string | null>(null);
+  useEffect(() => {
+    const nodeId = focusAfterRenderRef.current;
+    if (!nodeId) return;
+    focusAfterRenderRef.current = null;
+    viewportRef.current
+      ?.querySelector<HTMLTextAreaElement>(
+        `[data-node-id="${nodeId}"] textarea`,
+      )
+      ?.focus({ preventScroll: true });
+  });
   const gestureRef = useRef<Gesture | null>(null); //드래그 시작 시 위치와 어떤거 이동할지
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -186,7 +251,12 @@ export default function Workspace({
   const [savedDocument, setSavedDocument] = useState(initialDocument);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  // 통신·서버 오류처럼 다시 시도하면 될 수 있는 실패인지. 400·401·403·404는 아니다.
+  const [saveRetryable, setSaveRetryable] = useState(true);
   const [hasConflict, setHasConflict] = useState(false);
+  const [conflictBusy, setConflictBusy] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+  const [notice, setNotice] = useState("");
   const savingRef = useRef(false);
   const documentVersionRef = useRef(initialVersion);
   const unconfirmedSaveRef = useRef<{
@@ -195,7 +265,7 @@ export default function Workspace({
   } | null>(null);
   const hasUnsavedChanges = rootDocument !== savedDocument;
 
-  // 미저장 이탈 경고만 유지한다. 브라우저에 문서를 저장하지는 않는다.
+  // 자동 저장이 끝나기 전에 닫으면 경고한다. 브라우저에 문서를 저장하지는 않는다.
   useEffect(() => {
     if (!hasUnsavedChanges) return;
     function handleBeforeUnload(event: BeforeUnloadEvent) {
@@ -206,6 +276,38 @@ export default function Workspace({
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [hasUnsavedChanges]);
 
+  // 앱 안 이동(뒤로 가기 포함)으로 편집기를 벗어날 때 남은 변경을 마지막으로 보낸다.
+  const exitSaveRef = useRef({
+    pending: false,
+    document: rootDocument,
+  });
+  useEffect(() => {
+    exitSaveRef.current = {
+      pending: hasUnsavedChanges && !hasConflict && !isSaving,
+      document: rootDocument,
+    };
+  });
+  useEffect(() => {
+    return () => {
+      const { pending, document } = exitSaveRef.current;
+      if (!pending || unconfirmedSaveRef.current) return;
+      void saveWorkspaceDocument(
+        projectId,
+        document,
+        documentVersionRef.current,
+        { keepalive: true },
+      ).catch(() => {
+        // 화면이 이미 사라졌으므로 알릴 곳이 없다. 다음에 열 때 서버 버전이 기준이 된다.
+      });
+    };
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(""), 6000);
+    return () => clearTimeout(timer);
+  }, [notice]);
+
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [selectedConnectionId, setSelectedConnectionId] = useState<
     string | null
@@ -215,7 +317,16 @@ export default function Workspace({
   const [selectionRect, setSelectionRect] = useState<SelectionRect | null>(
     null,
   );
+  // 다른 공간으로 옮기면(뒤로 가기 포함) 이전 공간의 선택은 의미가 없으므로 비운다.
+  const [selectionCanvasKey, setSelectionCanvasKey] = useState(canvasKey);
+  if (selectionCanvasKey !== canvasKey) {
+    setSelectionCanvasKey(canvasKey);
+    setSelectedNodeIds([]);
+    setSelectedConnectionId(null);
+  }
   const [isPanning, setIsPanning] = useState(false); //드래그 상태따라 커서 변경
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  const spaceHeldRef = useRef(false);
   const hasPendingEdit =
     history.transactionStart !== null &&
     history.transactionStart !== rootDocument;
@@ -371,20 +482,45 @@ export default function Workspace({
       const pointerY = event.clientY - rect.top;
 
       // 휠 이동량 픽셀로 환산
-      let delta = event.deltaY;
+      const unit =
+        event.deltaMode === WheelEvent.DOM_DELTA_LINE
+          ? 16
+          : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+            ? rect.height
+            : 1;
+      let delta = event.deltaY * unit;
 
-      if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) {
-        delta *= 16;
-      } else if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
-        delta *= rect.height;
+      // 트랙패드 두 손가락 스크롤과 Shift+휠은 화면 이동, Ctrl+휠·핀치와 마우스 휠은 확대.
+      // 트랙패드는 픽셀 단위로 가로 성분이나 작은·소수 이동량을 함께 보낸다.
+      const trackpadScroll =
+        !event.ctrlKey &&
+        !event.metaKey &&
+        event.deltaMode === WheelEvent.DOM_DELTA_PIXEL &&
+        (event.deltaX !== 0 ||
+          !Number.isInteger(event.deltaY) ||
+          Math.abs(event.deltaY) < 50);
+      if (trackpadScroll || event.shiftKey) {
+        const dx = (event.shiftKey ? event.deltaY : event.deltaX) * unit;
+        const dy = event.shiftKey ? 0 : delta;
+        setCamera((current) => ({
+          ...current,
+          x: current.x - dx,
+          y: current.y - dy,
+        }));
+        return;
       }
+      // 핀치(ctrlKey)는 이동량이 작으므로 조금 더 민감하게 반응시킨다.
+      if (event.ctrlKey) delta *= 4;
 
       //부드러운 확대축소
       const limitedDelta = Math.max(-200, Math.min(delta, 200));
       const factor = Math.exp(-limitedDelta * 0.002);
 
       setCamera((current) => {
-        const zoom = Math.max(0.1, Math.min(current.zoom * factor, 2));
+        const zoom = Math.max(
+          ZOOM_MIN,
+          Math.min(current.zoom * factor, ZOOM_MAX),
+        );
 
         if (zoom === current.zoom) return current;
 
@@ -408,8 +544,68 @@ export default function Workspace({
     };
   }, []);
 
+  // Space를 누르고 있는 동안 왼쪽 드래그는 화면 이동이 된다(입력 중에는 제외).
+  useEffect(() => {
+    function isTyping(target: EventTarget | null) {
+      return (
+        target instanceof Element &&
+        !!target.closest("input, textarea, select, [contenteditable='true']")
+      );
+    }
+    function down(event: KeyboardEvent) {
+      if (event.code !== "Space" || event.repeat || isTyping(event.target))
+        return;
+      if (
+        event.target instanceof Element &&
+        event.target.closest("button, a, [role='button']") &&
+        !event.target.closest("[data-node-id]")
+      )
+        return;
+      event.preventDefault();
+      spaceHeldRef.current = true;
+      setSpaceHeld(true);
+    }
+    function up(event: KeyboardEvent) {
+      if (event.code !== "Space") return;
+      spaceHeldRef.current = false;
+      setSpaceHeld(false);
+    }
+    function reset() {
+      spaceHeldRef.current = false;
+      setSpaceHeld(false);
+    }
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    window.addEventListener("blur", reset);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+      window.removeEventListener("blur", reset);
+    };
+  }, []);
+
+  function zoomBy(factor: number) {
+    const viewport = viewportRef.current;
+    if (!viewport || gestureRef.current) return;
+    const { width, height } = viewport.getBoundingClientRect();
+    setCamera((current) => {
+      const zoom = Math.max(
+        ZOOM_MIN,
+        Math.min(current.zoom * factor, ZOOM_MAX),
+      );
+      const centerX = (width / 2 - current.x) / current.zoom;
+      const centerY = (height / 2 - current.y) / current.zoom;
+      return {
+        x: width / 2 - centerX * zoom,
+        y: height / 2 - centerY * zoom,
+        zoom,
+      };
+    });
+  }
+
   function startPan(event: ReactPointerEvent<HTMLDivElement>) {
-    if (event.button !== 1 || gestureRef.current) return;
+    const spacePan = event.button === 0 && spaceHeldRef.current;
+    if ((event.button !== 1 && !spacePan) || gestureRef.current) return;
 
     event.preventDefault();
     event.stopPropagation();
@@ -522,16 +718,34 @@ export default function Workspace({
   }
 
   function handleWorkspaceKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
+    // 저장은 입력칸 안에서도 동작해야 한다(브라우저의 "페이지 저장" 대신).
+    if (
+      (event.ctrlKey || event.metaKey) &&
+      !event.altKey &&
+      event.key.toLowerCase() === "s" &&
+      !event.nativeEvent.isComposing
+    ) {
+      event.preventDefault();
+      void saveWorkspace();
+      return;
+    }
     if (
       event.defaultPrevented ||
       event.nativeEvent.isComposing ||
       event.keyCode === 229 ||
-      event.altKey ||
       (event.target instanceof Element &&
         event.target.closest("input, textarea, [contenteditable='true']"))
     ) {
       return;
     }
+    if (event.altKey) {
+      if (event.key === "ArrowUp" && activeDepth > 0) {
+        event.preventDefault();
+        navigateCanvas(canvasPath.slice(0, activeDepth - 1));
+      }
+      return;
+    }
+    if (handleEditorShortcut(event)) return;
 
     if (event.key === "Escape") {
       const gesture = gestureRef.current;
@@ -569,6 +783,201 @@ export default function Workspace({
       event.preventDefault();
       deleteSelection();
     }
+  }
+
+  /** 노드 추가·복제·전체 선택·방향키 이동·확대 단축키. 처리했으면 true. */
+  function handleEditorShortcut(event: ReactKeyboardEvent<HTMLElement>) {
+    const key = event.key.toLowerCase();
+    const command = event.ctrlKey || event.metaKey;
+    if (command && !event.shiftKey && key === "a") {
+      event.preventDefault();
+      setSelectedConnectionId(null);
+      setSelectedNodeIds(workspace.nodes.map((node) => node.id));
+      return true;
+    }
+    if (command && !event.shiftKey && key === "d") {
+      event.preventDefault();
+      duplicateSelection();
+      return true;
+    }
+    if (command) return false;
+    if (event.key.startsWith("Arrow") && selectedNodeIds.length) {
+      event.preventDefault();
+      const step = event.shiftKey ? NUDGE_STEP_LARGE : NUDGE_STEP;
+      const [dx, dy] =
+        event.key === "ArrowLeft"
+          ? [-step, 0]
+          : event.key === "ArrowRight"
+            ? [step, 0]
+            : event.key === "ArrowUp"
+              ? [0, -step]
+              : [0, step];
+      nudgeSelection(dx, dy);
+      return true;
+    }
+    // "+"는 대부분의 자판에서 Shift가 필요하므로 확대 키는 Shift와 무관하게 받는다.
+    const zoomActions: Record<string, () => void> = {
+      "+": () => zoomBy(1.25),
+      "=": () => zoomBy(1.25),
+      "-": () => zoomBy(0.8),
+      _: () => zoomBy(0.8),
+      "0": fitCanvas,
+    };
+    const createActions: Record<string, () => void> = {
+      t: () => addNode("text_node"),
+      i: () => {
+        const nodeId = addNode("image_node");
+        if (nodeId) chooseImage(nodeId);
+      },
+      c: () => addNode("canvas_node"),
+    };
+    const action =
+      zoomActions[key] ?? (event.shiftKey ? undefined : createActions[key]);
+    if (!action) return false;
+    event.preventDefault();
+    action();
+    return true;
+  }
+
+  function nudgeSelection(dx: number, dy: number) {
+    if (gestureRef.current) return;
+    setWorkspace((current) => {
+      const moving = current.nodes.filter((node) =>
+        selectedNodeIds.includes(node.id),
+      );
+      if (!moving.length) return current;
+      // 무한 캔버스가 아니면 선택 전체를 한 덩어리로 경계 안에 둔다.
+      let moveX = dx;
+      let moveY = dy;
+      if (!current.canvas.infinite) {
+        const left = Math.min(...moving.map((node) => node.position.x));
+        const top = Math.min(...moving.map((node) => node.position.y));
+        const right = Math.max(
+          ...moving.map((node) => node.position.x + node.width),
+        );
+        const bottom = Math.max(
+          ...moving.map((node) => node.position.y + node.height),
+        );
+        moveX = Math.max(-left, Math.min(dx, current.canvas.width - right));
+        moveY = Math.max(-top, Math.min(dy, current.canvas.height - bottom));
+      }
+      if (!moveX && !moveY) return current;
+      return {
+        ...current,
+        nodes: current.nodes.map((node) =>
+          selectedNodeIds.includes(node.id)
+            ? {
+                ...node,
+                position: {
+                  x: node.position.x + moveX,
+                  y: node.position.y + moveY,
+                },
+              }
+            : node,
+        ),
+      };
+    });
+  }
+
+  function duplicateSelection() {
+    if (gestureRef.current || !selectedNodeIds.length) return;
+    const copies = duplicateNodes(workspace, selectedNodeIds, 24);
+    if (
+      [...walkWorkspaceNodes(rootDocument)].length + countNodes(copies.nodes) >
+      MAX_WORKSPACE_NODES
+    ) {
+      setNotice(
+        `노드는 프로젝트 전체에서 ${MAX_WORKSPACE_NODES}개까지 만들 수 있어요.`,
+      );
+      return;
+    }
+    dispatchHistory({ type: "commit" });
+    setWorkspace((current) => ({
+      ...current,
+      nodes: [...current.nodes, ...copies.nodes],
+      connections: [...current.connections, ...copies.connections].slice(
+        0,
+        MAX_CONNECTIONS,
+      ),
+    }));
+    setSelectedConnectionId(null);
+    setSelectedNodeIds(copies.nodes.map((node) => node.id));
+  }
+
+  /** 키보드·Properties에서 두 노드를 마주 보는 변끼리 잇는다. */
+  function connectNodes(sourceId: string, targetId: string) {
+    if (gestureRef.current || sourceId === targetId) return;
+    const source = workspace.nodes.find((node) => node.id === sourceId);
+    const target = workspace.nodes.find((node) => node.id === targetId);
+    if (!source || !target) return;
+    const sides = pickFacingSides(source, target);
+    const connection: NodeConnection = {
+      id: uuidv4(),
+      source: { nodeId: sourceId, side: sides.source },
+      target: { nodeId: targetId, side: sides.target },
+    };
+    const key = getConnectionKey(connection);
+    if (
+      workspace.connections.some(
+        (existing) =>
+          getConnectionKey(existing) === key ||
+          (existing.source.nodeId === sourceId &&
+            existing.target.nodeId === targetId) ||
+          (existing.source.nodeId === targetId &&
+            existing.target.nodeId === sourceId),
+      )
+    ) {
+      setNotice("두 노드는 이미 연결되어 있어요.");
+      return;
+    }
+    if (workspace.connections.length >= MAX_CONNECTIONS) {
+      setNotice(`연결선은 한 공간에 ${MAX_CONNECTIONS}개까지 만들 수 있어요.`);
+      return;
+    }
+    dispatchHistory({ type: "commit" });
+    setWorkspace((current) => ({
+      ...current,
+      connections: [...current.connections, connection],
+    }));
+  }
+
+  function changeView(
+    patch: Pick<WorkspaceDocument["canvas"], "lineStyle" | "grid">,
+  ) {
+    if (gestureRef.current) return;
+    dispatchHistory({ type: "commit" });
+    setWorkspace((current) => ({
+      ...current,
+      canvas: { ...current.canvas, ...patch },
+    }));
+  }
+
+  function setConnectionColor(connectionId: string, color: ConnectionColor) {
+    if (gestureRef.current) return;
+    dispatchHistory({ type: "commit" });
+    setWorkspace((current) => ({
+      ...current,
+      connections: current.connections.map((connection) => {
+        if (connection.id !== connectionId) return connection;
+        // 기본색은 저장하지 않아 이전 문서와 같은 모양을 유지한다.
+        const next = { ...connection };
+        if (color === DEFAULT_CONNECTION_COLOR) delete next.color;
+        else next.color = color;
+        return next;
+      }),
+    }));
+  }
+
+  function removeConnection(connectionId: string) {
+    if (gestureRef.current) return;
+    dispatchHistory({ type: "commit" });
+    setWorkspace((current) => ({
+      ...current,
+      connections: current.connections.filter(
+        (connection) => connection.id !== connectionId,
+      ),
+    }));
+    if (selectedConnectionId === connectionId) setSelectedConnectionId(null);
   }
 
   function startNodeDrag(
@@ -931,13 +1340,19 @@ export default function Workspace({
   }
   function addNode(type: WorkspaceNode["type"]) {
     const viewport = viewportRef.current;
-    if (
-      !viewport ||
-      gestureRef.current ||
-      (type === "canvas_node" && activeDepth >= MAX_CANVAS_DEPTH) ||
-      [...walkWorkspaceNodes(rootDocument)].length >= MAX_WORKSPACE_NODES
-    )
+    if (!viewport || gestureRef.current) return null;
+    if (type === "canvas_node" && activeDepth >= MAX_CANVAS_DEPTH) {
+      setNotice(
+        `작업 공간은 ${MAX_CANVAS_DEPTH}단계까지 넣을 수 있어요. 이 공간에는 캔버스 노드를 더 넣을 수 없어요.`,
+      );
       return null;
+    }
+    if ([...walkWorkspaceNodes(rootDocument)].length >= MAX_WORKSPACE_NODES) {
+      setNotice(
+        `노드는 프로젝트 전체에서 ${MAX_WORKSPACE_NODES}개까지 만들 수 있어요.`,
+      );
+      return null;
+    }
     const rect = viewport.getBoundingClientRect();
     const width = Math.min(
       type === "image_node" ? 360 : type === "canvas_node" ? 260 : 320,
@@ -977,7 +1392,11 @@ export default function Workspace({
               ...base,
               type,
               title: "새 작업 공간",
-              document: createWorkspace(),
+              // 새 하위 공간은 지금 공간의 보기 설정(선 모양·점 배경)을 물려받는다.
+              document: inheritViewSettings(
+                createWorkspace(),
+                workspace.canvas,
+              ),
             }
           : { ...base, type, text: "" };
     setWorkspace((current) => ({
@@ -986,11 +1405,14 @@ export default function Workspace({
     }));
     setSelectedNodeIds([node.id]);
     setSelectedConnectionId(null);
+    setNotice("");
     setCamera((current) => ({
       ...current,
       x: rect.width / 2 - (x + width / 2) * current.zoom,
       y: rect.height / 2 - (y + height / 2) * current.zoom,
     }));
+    // 새 텍스트 노드는 바로 받아 적을 수 있게 본문에 커서를 둔다.
+    if (type === "text_node") focusAfterRenderRef.current = node.id;
     return node.id;
   }
 
@@ -1004,7 +1426,52 @@ export default function Workspace({
     dispatchHistory({ type: "commit" });
     setSelectedNodeIds([]);
     setSelectedConnectionId(null);
-    setCanvasPath(path);
+    writeCanvasPath(path, "push");
+  }
+
+  function exportDocument() {
+    const blob = new Blob([JSON.stringify(rootDocument, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = window.document.createElement("a");
+    link.href = url;
+    link.download = `${projectTitle.replace(/[\\/:*?"<>|]+/g, "_") || "nono"}.nono.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function loadServerVersion() {
+    if (
+      window.confirm(
+        "서버 버전을 불러오면 이 화면에서 저장하지 못한 편집 내용은 사라집니다. 계속할까요?",
+      )
+    )
+      window.location.reload();
+  }
+
+  async function overwriteServerVersion() {
+    if (
+      conflictBusy ||
+      !window.confirm(
+        "다른 화면에서 저장한 내용을 지우고 지금 화면의 내용으로 덮어쓸까요?",
+      )
+    )
+      return;
+    setConflictBusy(true);
+    try {
+      const server = await loadWorkspaceDocument(projectId);
+      documentVersionRef.current = server.documentVersion;
+      unconfirmedSaveRef.current = null;
+      setHasConflict(false);
+      await saveWorkspace({ overwrite: true });
+    } catch {
+      setSaveError(
+        "서버 버전을 확인하지 못했습니다. 연결 상태를 확인한 뒤 다시 시도해주세요.",
+      );
+    } finally {
+      setConflictBusy(false);
+    }
   }
 
   function openCanvas(nodeId: string) {
@@ -1124,16 +1591,16 @@ export default function Workspace({
     setSelectedConnectionId(null);
   }
 
-  async function saveWorkspace() {
+  async function saveWorkspace({ overwrite = false } = {}) {
     if (
       savingRef.current ||
       gestureRef.current ||
-      hasConflict ||
+      (hasConflict && !overwrite) ||
       !hasUnsavedChanges
     )
       return;
     if (imageUploads.isUploading) {
-      setSaveError("이미지 업로드가 끝난 뒤 저장해주세요.");
+      // 자동 저장은 업로드가 끝나면 다시 시도한다.
       return;
     }
     savingRef.current = true;
@@ -1174,16 +1641,20 @@ export default function Workspace({
       );
       documentVersionRef.current = version;
       setSavedDocument(documentToSave);
+      setLastSavedAt(new Date());
+      setSaveRetryable(true);
       unconfirmedSaveRef.current = null;
     } catch (error) {
       if (error instanceof WorkspaceSaveError) {
         if (error.status >= 400 && error.status < 500)
           unconfirmedSaveRef.current = null;
         setHasConflict(error.status === 409);
+        setSaveRetryable(error.status >= 500);
         setSaveError(error.message);
       } else {
+        setSaveRetryable(true);
         setSaveError(
-          "저장 결과를 확인하지 못했습니다. 현재 화면의 편집 내용은 유지됩니다. 연결 상태를 확인한 뒤 다시 저장해주세요.",
+          "저장하지 못했습니다. 편집 내용은 이 화면에 남아 있고, 잠시 뒤 자동으로 다시 시도합니다.",
         );
       }
     } finally {
@@ -1191,6 +1662,26 @@ export default function Workspace({
       setIsSaving(false);
     }
   }
+
+  useAutosave({
+    document: rootDocument,
+    pending: hasUnsavedChanges && !hasConflict && (!saveError || saveRetryable),
+    failed: !!saveError,
+    save: saveWorkspace,
+    isBusy: () =>
+      savingRef.current || !!gestureRef.current || imageUploads.isUploading,
+  });
+  const saveStatus = isSaving
+    ? "저장 중…"
+    : hasConflict
+      ? "저장 보류 · 충돌"
+      : saveError
+        ? "저장하지 못함"
+        : hasUnsavedChanges
+          ? "편집 중…"
+          : lastSavedAt
+            ? `저장됨 · ${timeFormat.format(lastSavedAt)}`
+            : "모든 변경 사항 저장됨";
 
   const selectedNode =
     selectedNodeIds.length === 1
@@ -1202,13 +1693,19 @@ export default function Workspace({
   const gridStep =
     24 * 2 ** Math.max(0, Math.ceil(Math.log2(0.5 / camera.zoom)));
   const dotRadius = Math.max(0.8, camera.zoom);
+  const showGrid = workspace.canvas.grid !== false;
+  const selectedConnection = selectedConnectionId
+    ? workspace.connections.find(
+        (connection) => connection.id === selectedConnectionId,
+      )
+    : undefined;
   const selectionDescription = selectedConnectionId
     ? "선택한 연결선 삭제 (Delete / Backspace)"
     : `선택한 노드 ${selectedNodeIds.length}개 삭제 (Delete / Backspace)`;
 
   return (
     <main
-      className="fixed inset-0 flex flex-col bg-neutral-200 text-neutral-900"
+      className="fixed inset-0 flex flex-col bg-mist-deep text-bark caret-ink [color-scheme:light]"
       onKeyDown={handleWorkspaceKeyDown}
       onPaste={handlePaste}
     >
@@ -1227,7 +1724,7 @@ export default function Workspace({
             void imageUploads.upload(target.nodeId, file, target.path);
         }}
       />
-      <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-3 border-b border-neutral-300 bg-white px-4 py-2">
+      <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-3 border-b border-rule bg-white px-4 py-2">
         <Link
           href="/dashboard"
           onNavigate={(event) => {
@@ -1241,155 +1738,186 @@ export default function Workspace({
               return;
             }
           }}
-          className="shrink-0 text-sm text-neutral-600 hover:text-neutral-900"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-md text-sm text-lichen hover:text-bark focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-moss-deep"
         >
-          ← 프로젝트 목록
+          <ArrowLeftIcon />
+          프로젝트 목록
         </Link>
 
-        <h1 className="min-w-0 flex-1 truncate text-sm font-medium">
-          작업 공간 ·{" "}
+        <h1
+          className="min-w-0 flex-1 truncate text-sm font-medium"
+          title={currentCanvas ? canvasNodeTitle(currentCanvas) : projectTitle}
+        >
           {currentCanvas ? canvasNodeTitle(currentCanvas) : projectTitle}
         </h1>
 
-        <span className="ml-auto shrink-0 text-sm text-neutral-500">
-          {Math.round(camera.zoom * 100)}%
-        </span>
-        <button
-          type="button"
-          onClick={undo}
-          disabled={!canUndo}
-          title="실행 취소 (Ctrl+Z)"
-          aria-label="실행 취소"
-          aria-keyshortcuts="Control+Z Meta+Z"
-          className={iconButtonClassName}
-        >
-          <Image
-            src="/icons/undo.png"
-            alt=""
-            aria-hidden="true"
-            width={24}
-            height={24}
-            unoptimized
-            draggable={false}
-            className="pointer-events-none h-6 w-6 object-contain select-none"
-          />
-        </button>
-        <button
-          type="button"
-          onClick={redo}
-          disabled={!canRedo}
-          title="다시 실행 (Ctrl+Shift+Z / Ctrl+Y)"
-          aria-label="다시 실행"
-          aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z Control+Y"
-          className={iconButtonClassName}
-        >
-          <Image
-            src="/icons/redo.png"
-            alt=""
-            aria-hidden="true"
-            width={24}
-            height={24}
-            unoptimized
-            draggable={false}
-            className="pointer-events-none h-6 w-6 object-contain select-none"
-          />
-        </button>
-        <button
-          type="button"
-          onClick={deleteSelection}
-          disabled={selectionCount === 0}
-          aria-label={
-            selectionCount > 0 ? `선택 삭제 (${selectionCount}개)` : "선택 삭제"
-          }
-          title={
-            selectionCount > 0
-              ? selectionDescription
-              : "선택 삭제 (Delete / Backspace)"
-          }
-          aria-keyshortcuts="Delete Backspace"
-          className={iconButtonClassName}
-        >
-          <Image
-            src="/icons/trash.png"
-            alt=""
-            aria-hidden="true"
-            width={24}
-            height={24}
-            unoptimized
-            draggable={false}
-            className="pointer-events-none h-6 w-6 object-contain select-none"
-          />
-        </button>
-        <button
-          type="button"
-          onClick={fitCanvas}
-          className="shrink-0 rounded border border-neutral-300 px-3 py-1.5 text-sm hover:bg-neutral-100"
-        >
-          화면 맞춤
-        </button>
-        <button
-          type="button"
-          onClick={saveWorkspace}
-          disabled={
-            isSaving ||
-            imageUploads.isUploading ||
-            hasConflict ||
-            !hasUnsavedChanges
-          }
-          className="shrink-0 rounded border border-neutral-300 px-3 py-1.5 text-sm hover:bg-neutral-100 disabled:cursor-wait disabled:opacity-50"
-        >
-          {isSaving ? "저장 중…" : "저장"}
-        </button>
+        <div role="group" aria-label="편집 기록" className="flex gap-1">
+          <button
+            type="button"
+            onClick={undo}
+            disabled={!canUndo}
+            title="실행 취소 (Ctrl+Z)"
+            aria-label="실행 취소"
+            aria-keyshortcuts="Control+Z Meta+Z"
+            className={iconButtonClassName}
+          >
+            <Image
+              src="/icons/undo.png"
+              alt=""
+              aria-hidden="true"
+              width={24}
+              height={24}
+              unoptimized
+              draggable={false}
+              className="pointer-events-none h-5 w-5 object-contain opacity-80 select-none"
+            />
+          </button>
+          <button
+            type="button"
+            onClick={redo}
+            disabled={!canRedo}
+            title="다시 실행 (Ctrl+Shift+Z / Ctrl+Y)"
+            aria-label="다시 실행"
+            aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z Control+Y"
+            className={iconButtonClassName}
+          >
+            <Image
+              src="/icons/redo.png"
+              alt=""
+              aria-hidden="true"
+              width={24}
+              height={24}
+              unoptimized
+              draggable={false}
+              className="pointer-events-none h-5 w-5 object-contain opacity-80 select-none"
+            />
+          </button>
+          <button
+            type="button"
+            onClick={deleteSelection}
+            disabled={selectionCount === 0}
+            aria-label={
+              selectionCount > 0
+                ? `선택 삭제 (${selectionCount}개)`
+                : "선택 삭제"
+            }
+            title={
+              selectionCount > 0
+                ? selectionDescription
+                : "선택 삭제 (Delete / Backspace)"
+            }
+            aria-keyshortcuts="Delete Backspace"
+            className={iconButtonClassName}
+          >
+            <Image
+              src="/icons/trash.png"
+              alt=""
+              aria-hidden="true"
+              width={24}
+              height={24}
+              unoptimized
+              draggable={false}
+              className="pointer-events-none h-5 w-5 object-contain opacity-80 select-none"
+            />
+          </button>
+        </div>
 
-        <span role="status" className="text-xs text-neutral-500">
-          {isSaving
-            ? "저장 중…"
-            : saveError
-              ? "저장 실패 · 편집 내용은 현재 화면에만 유지됨"
-              : hasUnsavedChanges
-                ? "저장하지 않은 변경 사항"
-                : "변경 사항 없음"}
-        </span>
-        {saveError && (
+        <div
+          role="group"
+          aria-label="확대·축소"
+          className="flex items-center rounded-lg border border-rule bg-white"
+        >
+          <button
+            type="button"
+            onClick={() => zoomBy(0.8)}
+            aria-label="축소"
+            title="축소 (−)"
+            aria-keyshortcuts="Minus"
+            className={zoomButtonClassName}
+          >
+            <MinusIcon />
+          </button>
+          <button
+            type="button"
+            onClick={fitCanvas}
+            title="화면 맞춤 (0)"
+            aria-keyshortcuts="0"
+            className="h-8 min-w-14 px-1 text-xs text-bark-soft tabular-nums hover:bg-mist focus-visible:outline-2 focus-visible:outline-moss-deep"
+          >
+            <span className="sr-only">화면 맞춤, 현재 </span>
+            {Math.round(camera.zoom * 100)}%
+          </button>
+          <button
+            type="button"
+            onClick={() => zoomBy(1.25)}
+            aria-label="확대"
+            title="확대 (+)"
+            aria-keyshortcuts="Plus"
+            className={zoomButtonClassName}
+          >
+            <PlusIcon />
+          </button>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span
+            role="status"
+            className={`hidden text-xs tabular-nums sm:inline ${saveError || hasConflict ? "text-red-600" : "text-lichen"}`}
+          >
+            {saveStatus}
+          </span>
+          <button
+            type="button"
+            onClick={() => void saveWorkspace()}
+            disabled={
+              isSaving ||
+              imageUploads.isUploading ||
+              hasConflict ||
+              !hasUnsavedChanges
+            }
+            aria-busy={isSaving}
+            title="지금 저장 (Ctrl+S) · 편집을 멈추면 자동으로 저장돼요"
+            aria-keyshortcuts="Control+S Meta+S"
+            className={`${quietButtonClassName} ${isSaving ? "cursor-wait" : "disabled:cursor-not-allowed"} disabled:text-lichen`}
+          >
+            저장
+          </button>
+          <ShortcutHelp buttonClassName={iconButtonClassName} />
+        </div>
+        {saveError && !hasConflict && (
           <p role="alert" className="w-full text-xs text-red-600">
             {saveError}
-            {hasConflict && (
-              <button
-                type="button"
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      "새로고침하면 현재 미저장 편집 내용을 잃게 됩니다. 최신 서버 문서를 불러올까요?",
-                    )
-                  )
-                    window.location.reload();
-                }}
-                className="ml-2 underline"
-              >
-                서버 문서 확인
-              </button>
-            )}
           </p>
         )}
       </header>
+      {hasConflict && (
+        <ConflictPanel
+          busy={conflictBusy}
+          onDownload={exportDocument}
+          onLoadServer={loadServerVersion}
+          onOverwrite={() => void overwriteServerVersion()}
+        />
+      )}
       {currentCanvas && (
         <nav
           aria-label="작업 공간 경로"
-          className="flex shrink-0 items-center gap-3 overflow-x-auto border-b border-neutral-200 bg-white px-4 py-2 text-xs"
+          className="flex shrink-0 items-center gap-3 overflow-x-auto border-b border-rule-soft bg-paper px-4 py-2 text-xs"
         >
           <button
             type="button"
             onClick={() => navigateCanvas(canvasPath.slice(0, activeDepth - 1))}
-            className="shrink-0 rounded-md bg-neutral-100 px-2.5 py-1.5 font-medium text-neutral-700 hover:bg-neutral-200"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-mist px-2.5 py-1.5 font-medium text-bark-soft hover:bg-mist-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-moss-deep"
           >
-            ← 상위 작업 공간
+            <ArrowLeftIcon size={14} />
+            상위 작업 공간
           </button>
-          <ol className="flex shrink-0 items-center gap-2 text-neutral-500">
+          <ol className="flex shrink-0 items-center gap-2 text-lichen">
             <li>
               <button
                 type="button"
                 onClick={() => navigateCanvas([])}
-                className="max-w-44 truncate align-middle hover:text-neutral-900"
+                title={projectTitle}
+                className="max-w-44 truncate rounded-sm align-middle hover:text-bark focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-moss-deep"
               >
                 {projectTitle}
               </button>
@@ -1400,7 +1928,8 @@ export default function Workspace({
                 {index === activeDepth - 1 ? (
                   <span
                     aria-current="location"
-                    className="max-w-44 truncate font-medium text-neutral-800"
+                    title={canvasNodeTitle(node)}
+                    className="max-w-44 truncate font-medium text-bark"
                   >
                     {canvasNodeTitle(node)}
                   </span>
@@ -1410,7 +1939,8 @@ export default function Workspace({
                     onClick={() =>
                       navigateCanvas(canvasPath.slice(0, index + 1))
                     }
-                    className="max-w-44 truncate hover:text-neutral-900"
+                    title={canvasNodeTitle(node)}
+                    className="max-w-44 truncate rounded-sm hover:text-bark focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-moss-deep"
                   >
                     {canvasNodeTitle(node)}
                   </button>
@@ -1423,6 +1953,8 @@ export default function Workspace({
       <WorkspaceMenu
         key={canvasKey}
         canvas={workspace.canvas}
+        onExport={exportDocument}
+        onViewChange={changeView}
         onApply={(canvas) => {
           if (gestureRef.current) return "드래그를 마친 뒤 다시 시도해주세요.";
           const result = applyCanvasSettings(workspace, canvas);
@@ -1445,19 +1977,26 @@ export default function Workspace({
           tabIndex={-1}
           className="relative min-h-0 flex-1 overflow-clip outline-none"
           style={{
-            backgroundColor: workspace.canvas.infinite ? "#fff" : undefined,
-            backgroundImage: workspace.canvas.infinite
-              ? `radial-gradient(circle, #b8bcc4 ${dotRadius}px, transparent ${dotRadius}px)`
+            backgroundColor: workspace.canvas.infinite
+              ? "var(--color-field)"
               : undefined,
+            backgroundImage:
+              workspace.canvas.infinite && showGrid
+                ? `radial-gradient(circle, ${GRID_DOT_COLOR} ${dotRadius}px, transparent ${dotRadius}px)`
+                : undefined,
             backgroundSize: `${gridStep * camera.zoom}px ${gridStep * camera.zoom}px`,
             backgroundPosition: `${camera.x}px ${camera.y}px`,
             cursor: isPanning
               ? "grabbing"
-              : connectionDraft
-                ? "crosshair"
-                : "default",
+              : spaceHeld
+                ? "grab"
+                : connectionDraft
+                  ? "crosshair"
+                  : "default",
           }}
-          aria-label="작업 공간 뷰포트"
+          role="region"
+          aria-roledescription="캔버스"
+          aria-label={`${currentCanvas ? canvasNodeTitle(currentCanvas) : projectTitle} 캔버스, 노드 ${workspace.nodes.length}개`}
           onPointerDownCapture={startPan}
           onPointerDown={startMarquee}
           onPointerMove={moveGesture}
@@ -1470,13 +2009,14 @@ export default function Workspace({
         >
           {/* 캔버스 */}
           <div
-            className={`absolute top-0 left-0 origin-top-left ${workspace.canvas.infinite ? "" : "bg-white shadow-sm"}`}
+            className={`absolute top-0 left-0 origin-top-left ${workspace.canvas.infinite ? "" : "bg-field shadow-card"}`}
             style={{
               width: workspace.canvas.infinite ? 0 : workspace.canvas.width,
               height: workspace.canvas.infinite ? 0 : workspace.canvas.height,
-              backgroundImage: workspace.canvas.infinite
-                ? undefined
-                : `radial-gradient(circle, #b8bcc4 ${dotRadius / camera.zoom}px, transparent ${dotRadius / camera.zoom}px)`,
+              backgroundImage:
+                workspace.canvas.infinite || !showGrid
+                  ? undefined
+                  : `radial-gradient(circle, ${GRID_DOT_COLOR} ${dotRadius / camera.zoom}px, transparent ${dotRadius / camera.zoom}px)`,
               backgroundSize: `${gridStep}px ${gridStep}px`,
               transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.zoom})`,
             }}
@@ -1490,11 +2030,6 @@ export default function Workspace({
               zoom={camera.zoom}
               onSelect={selectConnection}
             />
-            {workspace.nodes.length === 0 && !workspace.canvas.infinite && (
-              <div className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-neutral-400">
-                빈 작업 공간
-              </div>
-            )}
 
             {workspace.nodes.map((node) => {
               const frame = {
@@ -1541,7 +2076,7 @@ export default function Workspace({
             {selectionRect && (
               <div
                 aria-hidden="true"
-                className="pointer-events-none absolute z-20 border border-blue-500 bg-blue-500/10"
+                className="pointer-events-none absolute z-20 border border-moss-deep bg-moss/15"
                 style={{
                   left: selectionRect.x,
                   top: selectionRect.y,
@@ -1552,6 +2087,31 @@ export default function Workspace({
               />
             )}
           </div>
+          {/* 확대 비율과 무관하게 읽히도록 캔버스 변환 바깥에 둔다. */}
+          {workspace.nodes.length === 0 && (
+            <div className="pointer-events-none absolute inset-0 grid place-content-center px-6 text-center">
+              <div className="rounded-xl bg-paper/90 px-6 py-5 shadow-card backdrop-blur-sm">
+                <p className="text-sm font-medium text-bark">
+                  {currentCanvas ? "빈 하위 작업 공간" : "빈 작업 공간"}
+                </p>
+                <p className="mt-1 text-sm break-keep text-lichen">
+                  왼쪽 도구 막대나{" "}
+                  <kbd className="font-mono text-bark-soft">T</kbd> 키로 첫
+                  메모를 추가하세요.
+                </p>
+              </div>
+            </div>
+          )}
+          {notice && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-6 flex justify-center px-4">
+              <p
+                role="status"
+                className="pointer-events-auto rounded-lg bg-bark px-4 py-2.5 text-sm text-white shadow-float"
+              >
+                {notice}
+              </p>
+            </div>
+          )}
         </div>
         <WorkspaceProperties
           infinite={!!workspace.canvas.infinite}
@@ -1571,6 +2131,12 @@ export default function Workspace({
           onChooseImage={chooseImage}
           onRemoveImage={removeNodeImage}
           onDelete={deleteSelection}
+          canvasNodes={workspace.nodes}
+          connections={workspace.connections}
+          selectedConnection={selectedConnection}
+          onConnectionColor={setConnectionColor}
+          onConnect={connectNodes}
+          onDisconnect={removeConnection}
           onReturnToCanvas={() =>
             viewportRef.current?.focus({ preventScroll: true })
           }

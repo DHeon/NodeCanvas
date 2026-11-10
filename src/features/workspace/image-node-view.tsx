@@ -1,4 +1,5 @@
 import Image from "next/image";
+import { PlusIcon } from "./icons";
 import NodeFrame, { type NodeFrameProps } from "./node-frame";
 import type { ImageNode } from "./types";
 
@@ -20,7 +21,7 @@ export default function ImageNodeView({
 }: ImageNodeViewProps) {
   return (
     <NodeFrame {...frame} node={node}>
-      <div className="relative flex min-h-0 flex-1 items-center justify-center bg-neutral-50 p-2">
+      <div className="relative flex min-h-0 flex-1 items-center justify-center bg-paper p-2">
         {node.image ? (
           <Image
             key={node.image.id}
@@ -39,15 +40,15 @@ export default function ImageNodeView({
             disabled={uploading}
             aria-label="이미지 선택"
             title="이미지 선택 · Ctrl+V로 붙여넣기 가능"
-            className="grid h-14 w-14 place-items-center rounded-xl border border-dashed border-neutral-300 text-2xl text-neutral-500 hover:border-violet-400 hover:text-violet-600 disabled:opacity-50"
+            className="grid h-14 w-14 place-items-center rounded-xl border border-dashed border-rule bg-white text-lichen hover:border-moss-deep hover:bg-moss-wash hover:text-moss-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-moss-deep disabled:opacity-50"
           >
-            +
+            <PlusIcon size={22} />
           </button>
         )}
         {uploading && (
           <div
             role="status"
-            className="absolute inset-0 grid place-items-center rounded-b-2xl bg-white/80 text-sm text-neutral-600"
+            className="absolute inset-0 grid place-items-center bg-paper/85 text-sm text-bark-soft"
           >
             이미지 업로드 중…
           </div>

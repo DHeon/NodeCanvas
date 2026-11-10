@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { z } from "zod";
 
@@ -11,13 +12,27 @@ type ProjectPageProps = {
   params: Promise<{ projectId: string }>;
 };
 
+export async function generateMetadata({
+  params,
+}: ProjectPageProps): Promise<Metadata> {
+  const { projectId } = await params;
+  const session = await requireSession("/projects/" + projectId);
+  if (!z.uuid().safeParse(projectId).success) return { title: "nono" };
+  const project = await prisma.project.findFirst({
+    where: { id: projectId, ownerId: session.user.id },
+    select: { title: true },
+  });
+  return { title: project ? `${project.title} · nono` : "nono" };
+}
+
 export default async function ProjectPage({ params }: ProjectPageProps) {
   const { projectId } = await params;
-  const session = await requireSession("/projects/" + projectId);  //세션 확인
+  const session = await requireSession("/projects/" + projectId); //세션 확인
 
   if (!z.uuid().safeParse(projectId).success) notFound();
 
-  const project = await prisma.project.findFirst({  //프로젝트 id로 db에 있나 찾아보고 불러옴
+  const project = await prisma.project.findFirst({
+    //프로젝트 id로 db에 있나 찾아보고 불러옴
     where: {
       id: projectId,
       ownerId: session.user.id,
@@ -33,10 +48,8 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
   if (!project) notFound();
 
   const result = workspaceDocumentSchema.safeParse(
-    project.document === null
-      ? createWorkspace()
-      : project.document,
-  );  // id로 된게 없으면 새로 createWorkspace()를 함.
+    project.document === null ? createWorkspace() : project.document,
+  ); // id로 된게 없으면 새로 createWorkspace()를 함.
 
   if (!result.success) {
     throw new Error("저장된 작업 공간 문서의 형식이 올바르지 않습니다.");
@@ -47,7 +60,7 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
       key={project.id}
       projectId={project.id}
       projectTitle={project.title}
-      initialDocument={result.data}  //저장된 초기 데이터를 넘김
+      initialDocument={result.data} //저장된 초기 데이터를 넘김
       initialVersion={project.documentVersion}
     />
   );

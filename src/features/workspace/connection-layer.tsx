@@ -1,4 +1,6 @@
-import { getConnectionPath, getConnectionPoint } from "./connections";
+import { getConnectionPoint, getStyledConnectionPath } from "./connections";
+import { connectionColor } from "./connection-colors";
+import { nodeDisplayName } from "./workspace-tree";
 import type {
   ConnectionDraft,
   NodeConnection,
@@ -41,7 +43,9 @@ export default function ConnectionLayer({
         const target = nodesById.get(connection.target.nodeId);
         if (!source || !target) return null;
         const selected = connection.id === selectedConnectionId;
-        const path = getConnectionPath(
+        const color = connectionColor(connection.color);
+        const path = getStyledConnectionPath(
+          canvas.lineStyle,
           getConnectionPoint(source, connection.source.side),
           getConnectionPoint(target, connection.target.side),
           connection.source.side,
@@ -55,7 +59,7 @@ export default function ConnectionLayer({
               d={path}
               role="button"
               tabIndex={draft ? -1 : 0}
-              aria-label={`${source.title || "제목 없는 노드"} ↔ ${target.title || "제목 없는 노드"} 연결선`}
+              aria-label={`${nodeDisplayName(source)} ↔ ${nodeDisplayName(target)} 연결선, ${color.label}`}
               aria-pressed={selected}
               stroke="transparent"
               strokeWidth={14}
@@ -80,13 +84,29 @@ export default function ConnectionLayer({
             >
               <title>클릭해서 선택 · Delete로 연결선 삭제</title>
             </path>
+            {/* 선택·호버는 선 고유 색을 유지한 채 같은 색의 옅은 띠로 표시한다. */}
+            <path
+              d={path}
+              stroke={color.value}
+              strokeOpacity={0}
+              strokeWidth={10}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              vectorEffect="non-scaling-stroke"
+              className={
+                selected
+                  ? "[stroke-opacity:0.22]"
+                  : "group-focus-within/connection:[stroke-opacity:0.22] group-hover/connection:[stroke-opacity:0.14]"
+              }
+            />
             <path
               data-connection-id={connection.id}
               d={path}
-              stroke={selected ? "#2563eb" : "#8b5cf6"}
+              stroke={color.value}
               strokeWidth={selected ? 3 : 2}
+              strokeLinecap="round"
+              strokeLinejoin="round"
               vectorEffect="non-scaling-stroke"
-              className="group-focus-within/connection:stroke-blue-600 group-hover/connection:stroke-blue-600"
             />
           </g>
         );
@@ -95,13 +115,14 @@ export default function ConnectionLayer({
         <>
           <path
             data-connection-preview=""
-            d={getConnectionPath(
+            d={getStyledConnectionPath(
+              canvas.lineStyle,
               getConnectionPoint(draftSource, draft.source.side),
               draft.pointer,
               draft.source.side,
               draft.target?.side,
             )}
-            stroke="#8b5cf6"
+            stroke="var(--color-moss-deep)"
             strokeWidth={2}
             strokeDasharray={draft.target ? undefined : "5 4"}
             vectorEffect="non-scaling-stroke"
@@ -112,7 +133,7 @@ export default function ConnectionLayer({
               cx={draft.pointer.x}
               cy={draft.pointer.y}
               r={9 / zoom}
-              stroke="#8b5cf6"
+              stroke="var(--color-moss-deep)"
               strokeWidth={2}
               vectorEffect="non-scaling-stroke"
             />

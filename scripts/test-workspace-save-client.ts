@@ -120,23 +120,35 @@ test("사용자 재시도용 서버 조회에서 문서와 버전을 검증", as
   );
 });
 
-test("작업 공간에 자동 저장·브라우저 보관·복구 연결이 남지 않음", () => {
-  const source = readFileSync(
-    new URL("../src/features/workspace/workspace.tsx", import.meta.url),
-    "utf8",
-  );
-  assert.ok(source.includes("onClick={saveWorkspace}"));
+test("자동 저장은 서버에만 하고 브라우저 보관·복구는 하지 않는다", () => {
+  const read = (file: string) =>
+    readFileSync(
+      new URL(`../src/features/workspace/${file}`, import.meta.url),
+      "utf8",
+    );
+  const source = read("workspace.tsx");
+  const autosave = read("use-autosave.ts");
+  // 저장 버튼·Ctrl+S·편집 멈춤 뒤 자동 저장이 모두 같은 saveWorkspace를 쓴다.
+  assert.ok(source.includes("onClick={() => void saveWorkspace()}"));
+  assert.ok(source.includes("save: saveWorkspace"));
   assert.ok(source.includes('addEventListener("beforeunload"'));
-  for (const removed of [
-    "localStorage",
-    "persistDraft",
-    "useWorkspacePersistence",
-    "WorkspaceRecoveryNotice",
-    "recoveryDrafts",
-    "setTimeout",
-    'addEventListener("online"',
-  ])
-    assert.ok(!source.includes(removed), removed);
+  assert.ok(autosave.includes("AUTOSAVE_DELAY"));
+  for (const file of [source, autosave])
+    for (const removed of [
+      "localStorage",
+      "sessionStorage",
+      "indexedDB",
+      "persistDraft",
+      "WorkspaceRecoveryNotice",
+      "recoveryDrafts",
+    ])
+      assert.ok(!file.includes(removed), removed);
+});
+
+test("자동 저장은 편집이 멈춘 뒤 한 번만, 바쁠 때는 미뤘다가 저장한다", async () => {
+  const { AUTOSAVE_DELAY } =
+    await import("../src/features/workspace/use-autosave");
+  assert.ok(AUTOSAVE_DELAY >= 1000 && AUTOSAVE_DELAY <= 3000);
 });
 
 test("연결 생성·삭제 문서는 기존 저장 요청과 조회 형식으로 왕복한다", async () => {

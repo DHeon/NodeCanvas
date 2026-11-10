@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { WorkspaceDocument } from "./types";
 import { getConnectionKey, MAX_CONNECTIONS } from "./connections";
+import { CONNECTION_COLOR_KEYS } from "./connection-colors";
 import {
   MAX_CANVAS_DEPTH,
   MAX_WORKSPACE_NODES,
@@ -51,6 +52,7 @@ const connectionSchema = z.strictObject({
   id: z.uuid(),
   source: endpointSchema,
   target: endpointSchema,
+  color: z.enum(CONNECTION_COLOR_KEYS).optional(),
 });
 
 function documentSchemaAtDepth(depth: number): z.ZodType<WorkspaceDocument> {
@@ -72,6 +74,8 @@ function documentSchemaAtDepth(depth: number): z.ZodType<WorkspaceDocument> {
         width: z.number().positive().max(10000),
         height: z.number().positive().max(10000),
         infinite: z.boolean().optional(),
+        lineStyle: z.enum(["curved", "orthogonal"]).optional(),
+        grid: z.boolean().optional(),
       }),
       nodes: z.array(nodeSchema).max(MAX_WORKSPACE_NODES),
       // 이전에 저장한 문서에는 연결선 항목이 없어도 열린다.

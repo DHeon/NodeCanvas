@@ -86,6 +86,7 @@ export default function NodeFrame({
   return (
     <article
       tabIndex={-1}
+      aria-label={`${label} 노드: ${node.title.trim() || "제목 없음"}${selected ? ", 선택됨" : ""}`}
       data-node-id={node.id}
       data-node-type={node.type}
       onPointerDown={(event) => {
@@ -101,7 +102,7 @@ export default function NodeFrame({
         }
         onSelect(node.id, event.shiftKey);
       }}
-      className={`group/node absolute flex flex-col rounded-2xl border bg-white shadow-sm outline-none ${selected ? "border-blue-500 ring-2 ring-blue-200" : "border-neutral-300"}`}
+      className={`group/node absolute flex flex-col rounded-xl border bg-white transition-[box-shadow,border-color] duration-150 outline-none ${selected ? "border-moss-deep shadow-card-selected" : "border-rule shadow-card hover:border-sage-hover hover:shadow-card-lift"}`}
       style={{
         left: node.position.x,
         top: node.position.y,
@@ -143,7 +144,7 @@ export default function NodeFrame({
               editTitle();
             }
           }}
-          className="focus-visible:outline-inset flex h-12 shrink-0 cursor-grab touch-none items-center border-b border-neutral-200 bg-neutral-50 px-4 select-none focus-visible:outline-2 focus-visible:outline-neutral-400 active:cursor-grabbing"
+          className="focus-visible:outline-inset flex h-12 shrink-0 cursor-grab touch-none items-center border-b border-rule-soft bg-card-head px-4 select-none focus-visible:outline-2 focus-visible:outline-moss-deep active:cursor-grabbing"
         >
           {editingTitle ? (
             <input
@@ -177,11 +178,11 @@ export default function NodeFrame({
                   titleBar.current?.focus({ preventScroll: true });
                 }
               }}
-              className="min-w-0 flex-1 cursor-text touch-auto rounded bg-white px-1 text-sm font-medium outline-none select-text focus-visible:ring-2 focus-visible:ring-neutral-400"
+              className="min-w-0 flex-1 cursor-text touch-auto rounded bg-white px-1 text-sm font-medium outline-none select-text focus-visible:ring-2 focus-visible:ring-moss"
             />
           ) : (
             <span
-              className={`min-w-0 flex-1 truncate text-sm font-medium ${node.title ? "" : "text-neutral-400"}`}
+              className={`min-w-0 flex-1 truncate text-sm font-medium ${node.title ? "" : "text-lichen"}`}
             >
               {node.title || placeholder}
             </span>
@@ -191,10 +192,11 @@ export default function NodeFrame({
         <button
           type="button"
           aria-label={`${label} 노드 크기 조절`}
-          title="드래그해서 크기 조절"
+          title="드래그해서 크기 조절 · 키보드는 속성 패널의 W/H"
+          tabIndex={-1}
           onPointerDown={(event) => onResizeStart(event, node)}
           onFocus={() => onSelect(node.id)}
-          className="absolute right-2 bottom-2 z-10 grid h-5 w-5 cursor-nwse-resize touch-none place-items-center rounded bg-white/90 text-neutral-500 select-none hover:bg-blue-100 hover:text-blue-600"
+          className="absolute right-2 bottom-2 z-10 grid h-5 w-5 cursor-nwse-resize touch-none place-items-center rounded bg-white/90 text-lichen select-none hover:bg-moss-wash hover:text-moss-deep focus-visible:outline-2 focus-visible:outline-moss-deep"
         >
           <svg
             viewBox="0 0 16 16"
@@ -215,9 +217,11 @@ export default function NodeFrame({
           type="button"
           data-connection-side={side}
           aria-label={`${labels[side]} 연결점`}
+          // 포인터 전용 손잡이. 키보드 연결은 속성 패널의 "연결"에서 한다.
+          tabIndex={-1}
           title={`${labels[side]} 연결점 · 다른 노드의 점 근처로 드래그해 연결`}
           onPointerDown={(event) => onConnectStart(event, node, side)}
-          className={`absolute z-20 -translate-x-1/2 -translate-y-1/2 cursor-crosshair touch-none rounded-full border-violet-500 select-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-500 ${showPorts ? "block" : "hidden group-focus-within/node:block group-hover/node:block"} ${activePort === side ? "bg-violet-500" : "bg-white hover:bg-violet-100"}`}
+          className={`absolute z-20 -translate-x-1/2 -translate-y-1/2 cursor-crosshair touch-none rounded-full border-moss-deep select-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-moss-deep ${showPorts ? "block" : "hidden group-focus-within/node:block group-hover/node:block"} ${activePort === side ? "bg-moss-deep" : "bg-white hover:bg-moss-wash"}`}
           style={{
             ...positions[side],
             width: 8 / zoom,

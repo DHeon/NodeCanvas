@@ -48,3 +48,14 @@ export function* walkWorkspaceNodes(
 export function canvasNodeTitle(node: CanvasNode) {
   return node.title.trim() || "하위 작업 공간";
 }
+
+const typeLabel = {
+  text_node: "텍스트",
+  image_node: "이미지",
+  canvas_node: "캔버스",
+} as const;
+
+/** 제목이 없는 노드도 목록·스크린리더에서 구분되게 이름을 붙인다. */
+export function nodeDisplayName(node: WorkspaceNode) {
+  return node.title.trim() || `제목 없는 ${typeLabel[node.type]} 노드`;
+}

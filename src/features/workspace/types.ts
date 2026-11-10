@@ -1,3 +1,6 @@
+import type { ConnectionColor } from "./connection-colors";
+import type { ConnectionLineStyle } from "./connections";
+
 //좌표
 export type Point = {
   x: number;
@@ -59,6 +62,8 @@ export type NodeConnection = {
   id: string;
   source: ConnectionEndpoint;
   target: ConnectionEndpoint;
+  // 팔레트 이름(connection-colors.ts). 없으면 기본색.
+  color?: ConnectionColor;
 };
 
 // 드래그 중에만 사용하는 미리보기. 저장되는 문서에는 포함하지 않는다.
@@ -76,6 +81,9 @@ export type WorkspaceDocument = {
     height: number;
     // 이전 문서에 없으면 유한 캔버스로 처리한다.
     infinite?: boolean;
+    // 공간마다 따로 정하는 보기 설정. 없으면 곡선·점 배경 표시.
+    lineStyle?: ConnectionLineStyle;
+    grid?: boolean;
   };
   nodes: WorkspaceNode[];
   connections: NodeConnection[];

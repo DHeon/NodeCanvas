@@ -52,7 +52,8 @@ export function applyCanvasSettings(
   return {
     document: {
       ...document,
-      canvas: { ...canvas, infinite: !!canvas.infinite },
+      // 크기 설정만 바꾸고 선 모양·점 배경 같은 보기 설정은 유지한다.
+      canvas: { ...document.canvas, ...canvas, infinite: !!canvas.infinite },
       nodes:
         dx || dy
           ? document.nodes.map((node) => ({

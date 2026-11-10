@@ -187,6 +187,8 @@ const names = [
   "undo",
   "redo",
   "handleWorkspaceKeyDown",
+  "handleEditorShortcut",
+  "nudgeSelection",
   "startNodeDrag",
   "startNodeResize",
   "moveGesture",
@@ -256,6 +258,7 @@ type TestState = {
     target: ConnectionEndpoint | null;
   } | null;
   hoveredElement: TestElement | null;
+  calls: string[];
 };
 type Handlers = Record<string, (...args: unknown[]) => void>;
 const factory = new Function(
@@ -286,6 +289,18 @@ const factory = new Function(
   const setSelectionRect = rect => { state.rect = rect; };
   const setConnectionDraft = draft => { state.draft = draft; };
   const setIsPanning = value => { state.panning = value; };
+  // 단축키가 부르는 화면 밖 동작은 호출 기록만 남긴다.
+  const activeDepth = 0;
+  const canvasPath = [];
+  const NUDGE_STEP = 8;
+  const NUDGE_STEP_LARGE = 40;
+  const saveWorkspace = async () => { state.calls.push("save"); };
+  const navigateCanvas = () => { state.calls.push("navigate"); };
+  const addNode = type => { state.calls.push("add:" + type); return null; };
+  const chooseImage = () => {};
+  const zoomBy = factor => { state.calls.push("zoom:" + factor); };
+  const fitCanvas = () => { state.calls.push("fit"); };
+  const duplicateSelection = () => { state.calls.push("duplicate"); };
   ${compiled}
   return { ${names.join(", ")}, clearGesture };
 `,
@@ -303,6 +318,7 @@ function setup(selected: string[] = []) {
     focusCount: 0,
     draft: null,
     hoveredElement: null,
+    calls: [],
   };
   const gestureRef: { current: unknown } = { current: null };
   const viewport = {
@@ -987,4 +1003,54 @@ test("다른 포인터 이벤트는 무시하고 버튼이 풀리면 드래그�
   h.call("moveGesture", pointer({ buttons: 0 }));
   assert.equal(h.gestureRef.current, null);
   assert.equal(h.state.history.past.length, 0);
+});
+
+test("단축키: Ctrl+S는 입력칸에서도 저장, Ctrl+A 전체 선택, 방향키로 선택 노드 이동", () => {
+  const h = setup();
+  const inputKey = key("s", {
+    ctrlKey: true,
+    target: new TestElement(true),
+  });
+  h.call("handleWorkspaceKeyDown", inputKey);
+  assert.equal(inputKey.defaultPrevented, true);
+  assert.deepEqual(h.state.calls, ["save"]);
+
+  h.call("handleWorkspaceKeyDown", key("a", { ctrlKey: true }));
+  assert.deepEqual(
+    h.state.selected,
+    h.state.history.present.nodes.map((node) => node.id),
+  );
+
+  const [first] = h.state.history.present.nodes;
+  h.state.selected = [first.id];
+  const before = { ...first.position };
+  h.call("handleWorkspaceKeyDown", key("ArrowRight"));
+  h.call("handleWorkspaceKeyDown", key("ArrowDown", { shiftKey: true }));
+  const moved = h.state.history.present.nodes.find(
+    (node) => node.id === first.id,
+  )!;
+  assert.equal(moved.position.x, before.x + 8);
+  assert.equal(moved.position.y, before.y + 40);
+  // 노드를 옮기는 동안 다른 노드는 그대로다.
+  for (const node of h.state.history.present.nodes)
+    if (node.id !== first.id)
+      assert.deepEqual(
+        node.position,
+        h.state.history.past[0]?.nodes.find((item) => item.id === node.id)
+          ?.position ?? node.position,
+      );
+
+  h.call("handleWorkspaceKeyDown", key("t"));
+  h.call("handleWorkspaceKeyDown", key("+", { shiftKey: true }));
+  h.call("handleWorkspaceKeyDown", key("0"));
+  h.call("handleWorkspaceKeyDown", key("d", { ctrlKey: true }));
+  assert.deepEqual(h.state.calls.slice(1), [
+    "add:text_node",
+    "zoom:1.25",
+    "fit",
+    "duplicate",
+  ]);
+  // 입력칸 안의 일반 글자는 단축키가 아니다.
+  h.call("handleWorkspaceKeyDown", key("t", { target: new TestElement(true) }));
+  assert.equal(h.state.calls.length, 5);
 });

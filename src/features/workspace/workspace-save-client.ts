@@ -16,7 +16,7 @@ const messages: Record<number, string> = {
   401: "로그인이 만료되었습니다. 다시 로그인해주세요.",
   403: "이 주소에서는 저장 요청이 허용되지 않습니다.",
   404: "프로젝트가 삭제됐거나 접근 권한이 없습니다.",
-  409: "다른 화면에서 먼저 저장했습니다. 현재 내용은 저장되지 않았습니다. 서버 문서를 확인해주세요.",
+  409: "다른 화면에서 먼저 저장했습니다. 현재 화면의 편집 내용은 아직 저장되지 않았습니다.",
 };
 
 async function requestDocument(projectId: string, init?: RequestInit) {
@@ -45,11 +45,14 @@ export async function saveWorkspaceDocument(
   projectId: string,
   document: WorkspaceDocument,
   expectedVersion: number,
+  options: { keepalive?: boolean } = {},
 ): Promise<number> {
   const body = await requestDocument(projectId, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ document, expectedVersion }),
+    // 화면을 떠나는 중에도 요청이 끝나도록 한다(본문 64KB 이하일 때만 브라우저가 허용).
+    keepalive: options.keepalive,
   });
   const result = z
     .object({ documentVersion: z.number().int().nonnegative() })
