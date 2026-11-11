@@ -6,6 +6,8 @@ import {
   MAX_STROKES_PER_CANVAS,
   appendPoint,
   countDocumentDrawingPoints,
+  countNodesDrawingPoints,
+  exceedsDrawingLimits,
   countStrokePoints,
   eraseStrokes,
   simplifyPoints,
@@ -226,4 +228,60 @@ test("countDocumentDrawingPoints는 하위 캔버스까지 모든 그림의 점�
     countDocumentDrawingPoints(documentWith() as unknown as WorkspaceDocument),
     0,
   );
+});
+
+function bigStrokes(prefix: string, count: number, y = 0) {
+  return Array.from({ length: count }, (_, i) => ({
+    id: `${prefix}${i}`,
+    color: "teal" as const,
+    width: 4 as const,
+    points: Array.from({ length: MAX_POINTS_PER_STROKE * 2 }, (_, k) =>
+      k % 2 === 0 ? k : y + i * 100,
+    ),
+  }));
+}
+
+test("exceedsDrawingLimits: 선 수와 프로젝트 전체 점 수를 바뀐 공간 기준으로 계산한다", () => {
+  const sub = randomUUID();
+  const root = documentWith({ strokes: bigStrokes("a", 74) }, [
+    canvasNode(sub, { strokes: bigStrokes("b", 1) }),
+  ]) as unknown as WorkspaceDocument;
+  // 루트 74선 + 하위 1선 = 30만 점. 하위 공간을 같은 양으로 바꾸면 그대로다.
+  assert.equal(exceedsDrawingLimits(root, [sub], bigStrokes("c", 1)), false);
+  // 하위 공간에 점이 늘면 전체 한도를 넘는다(지우개로 선이 잘려 끝점이 늘어나는 경우).
+  assert.equal(
+    exceedsDrawingLimits(
+      root,
+      [sub],
+      [...bigStrokes("c", 1), { ...line(), points: [1, 1, 2, 2] }],
+    ),
+    true,
+  );
+  assert.equal(
+    exceedsDrawingLimits(
+      documentWith() as unknown as WorkspaceDocument,
+      [],
+      Array.from({ length: MAX_STROKES_PER_CANVAS + 1 }, (_, i) => ({
+        ...line(),
+        id: `x${i}`,
+        points: [i, 0],
+      })),
+    ),
+    true,
+  );
+});
+
+test("countNodesDrawingPoints는 복제할 캔버스 노드 안의 그림 점을 센다", () => {
+  const nodes = [
+    canvasNode(randomUUID(), { strokes: [stroke(), stroke({ id: "s2" })] }),
+  ] as unknown as WorkspaceDocument["nodes"];
+  assert.equal(countNodesDrawingPoints(nodes), 4);
+});
+
+test("eraseStrokes는 멀리 있는 선이 많아도 빠르게 건너뛴다", () => {
+  const strokes = bigStrokes("far", 75, 10_000);
+  const started = performance.now();
+  for (let i = 0; i < 5; i++)
+    assert.equal(eraseStrokes(strokes, [0, 0, 1, 1], 5, ids()), strokes);
+  assert.ok(performance.now() - started < 60, "5회 지우기가 60ms를 넘었다");
 });

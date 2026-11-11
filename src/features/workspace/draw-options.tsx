@@ -16,14 +16,23 @@ export default function DrawOptions({
   width,
   onColor,
   onWidth,
+  onReturnToCanvas,
 }: {
   color: ConnectionColor;
   width: StrokeWidth;
   onColor: (color: ConnectionColor) => void;
   onWidth: (width: StrokeWidth) => void;
+  onReturnToCanvas: () => void;
 }) {
   return (
-    <div className="absolute top-1/2 left-[76px] z-35 flex -translate-y-1/2 flex-col gap-3 rounded-2xl border border-bark/10 bg-white/95 p-3 shadow-float backdrop-blur-[18px]">
+    <div
+      // 마우스로 고른 뒤에는 캔버스로 초점을 돌려 Esc·P·E·Ctrl+Z가 바로 듣게 한다.
+      // 방향키로 고를 때(detail 0)는 라디오에 초점을 남긴다.
+      onClick={(event) => {
+        if (event.detail > 0) onReturnToCanvas();
+      }}
+      className="absolute top-1/2 left-[76px] z-35 flex -translate-y-1/2 flex-col gap-3 rounded-2xl border border-bark/10 bg-white/95 p-3 shadow-float backdrop-blur-[18px]"
+    >
       <fieldset>
         <legend className="sr-only">펜 색</legend>
         <div className="grid grid-cols-2 gap-1">

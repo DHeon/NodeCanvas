@@ -48,6 +48,9 @@ import {
 } from "./pen-settings";
 import {
   appendPoint,
+  appendStroke,
+  countNodesDrawingPoints,
+  exceedsDrawingLimits,
   countDocumentDrawingPoints,
   eraseStrokes,
   MAX_DRAWING_POINTS,
@@ -175,16 +178,6 @@ type Gesture =
 const DRAW_MIN_DISTANCE = 1.5;
 const ERASER_RADIUS = 10;
 const DRAWING_LIMIT_NOTICE = `그림은 한 공간에 선 ${MAX_STROKES_PER_CANVAS.toLocaleString()}개, 프로젝트 전체에 점 ${(MAX_DRAWING_POINTS / 10000).toLocaleString()}만 개까지 그릴 수 있어요.`;
-
-function appendStroke(
-  document: WorkspaceDocument,
-  stroke: DrawingStroke,
-): WorkspaceDocument {
-  return {
-    ...document,
-    drawing: { strokes: [...(document.drawing?.strokes ?? []), stroke] },
-  };
-}
 
 type SelectionRect = Point & { width: number; height: number };
 
@@ -441,19 +434,15 @@ export default function Workspace({
       const strokes =
         resolveWorkspacePath(root, gesture.path).document.drawing?.strokes ??
         [];
-      if (
-        strokes.length >= MAX_STROKES_PER_CANVAS ||
-        countDocumentDrawingPoints(root) + points.length / 2 >
-          MAX_DRAWING_POINTS
-      ) {
+      const stroke: DrawingStroke = {
+        id: uuidv4(),
+        color: gesture.color,
+        width: gesture.width,
+        points,
+      };
+      if (exceedsDrawingLimits(root, gesture.path, [...strokes, stroke])) {
         setNotice(DRAWING_LIMIT_NOTICE);
       } else {
-        const stroke: DrawingStroke = {
-          id: uuidv4(),
-          color: gesture.color,
-          width: gesture.width,
-          points,
-        };
         dispatchHistory({
           type: "change",
           update: (current) =>
@@ -846,24 +835,27 @@ export default function Workspace({
   ) {
     dispatchHistory({
       type: "change",
-      update: (root) =>
-        updateWorkspaceAtPath(root, gesture.path, (document) => {
-          const strokes = document.drawing?.strokes;
-          if (!strokes?.length) return document;
-          const next = eraseStrokes(
-            strokes,
-            eraser,
-            ERASER_RADIUS / gesture.zoom,
-            uuidv4,
-          );
-          if (next === strokes) return document;
-          // 선이 잘게 나뉘어 한도를 넘으면 이번 문지르기는 반영하지 않는다.
-          if (next.length > MAX_STROKES_PER_CANVAS) {
-            gesture.limitHit = true;
-            return document;
-          }
-          return { ...document, drawing: { strokes: next } };
-        }),
+      update: (root) => {
+        const strokes = resolveWorkspacePath(root, gesture.path).document
+          .drawing?.strokes;
+        if (!strokes?.length) return root;
+        const next = eraseStrokes(
+          strokes,
+          eraser,
+          ERASER_RADIUS / gesture.zoom,
+          uuidv4,
+        );
+        if (next === strokes) return root;
+        // 선이 잘게 나뉘거나 끝점이 늘어 한도를 넘으면 이번 문지르기는 반영하지 않는다.
+        if (exceedsDrawingLimits(root, gesture.path, next)) {
+          gesture.limitHit = true;
+          return root;
+        }
+        return updateWorkspaceAtPath(root, gesture.path, (document) => ({
+          ...document,
+          drawing: { strokes: next },
+        }));
+      },
     });
   }
 
@@ -1128,6 +1120,15 @@ export default function Workspace({
       setNotice(
         `노드는 프로젝트 전체에서 ${MAX_WORKSPACE_NODES}개까지 만들 수 있어요.`,
       );
+      return;
+    }
+    // 캔버스 노드를 복제하면 안의 그림도 함께 늘어난다.
+    if (
+      countDocumentDrawingPoints(rootDocument) +
+        countNodesDrawingPoints(copies.nodes) >
+      MAX_DRAWING_POINTS
+    ) {
+      setNotice(DRAWING_LIMIT_NOTICE);
       return;
     }
     dispatchHistory({ type: "commit" });
@@ -2273,6 +2274,9 @@ export default function Workspace({
             width={pen.width}
             onColor={(color) => changePen({ color })}
             onWidth={(width) => changePen({ width })}
+            onReturnToCanvas={() =>
+              viewportRef.current?.focus({ preventScroll: true })
+            }
           />
         )}
         <div

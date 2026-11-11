@@ -1,6 +1,6 @@
 import type { ConnectionColor } from "./connection-colors";
-import type { WorkspaceDocument } from "./types";
-import { walkWorkspaceNodes } from "./workspace-tree";
+import type { WorkspaceDocument, WorkspaceNode } from "./types";
+import { resolveWorkspacePath } from "./workspace-tree";
 
 // 캔버스 배경에 손으로 그린 선. 사용자가 고르거나 옮기는 객체가 아니라
 // 저장과 지우개 계산을 위한 단위일 뿐이다.
@@ -151,6 +151,29 @@ function sampleStroke(points: number[], step: number): number[] {
   return samples;
 }
 
+type Bounds = { left: number; top: number; right: number; bottom: number };
+
+const boundsCache = new WeakMap<number[], Bounds>();
+
+function boundsOf(points: number[]): Bounds {
+  const cached = boundsCache.get(points);
+  if (cached) return cached;
+  const bounds = {
+    left: Infinity,
+    top: Infinity,
+    right: -Infinity,
+    bottom: -Infinity,
+  };
+  for (let i = 0; i + 1 < points.length; i += 2) {
+    bounds.left = Math.min(bounds.left, points[i]);
+    bounds.right = Math.max(bounds.right, points[i]);
+    bounds.top = Math.min(bounds.top, points[i + 1]);
+    bounds.bottom = Math.max(bounds.bottom, points[i + 1]);
+  }
+  boundsCache.set(points, bounds);
+  return bounds;
+}
+
 /**
  * 지우개 경로(eraser, 점 목록)에서 radius 안에 든 선 구간만 지운다.
  * 중간이 지워진 선은 남은 구간마다 새 선으로 나뉜다.
@@ -165,8 +188,20 @@ export function eraseStrokes(
   if (eraser.length < 2) return strokes;
   let changed = false;
   const result: DrawingStroke[] = [];
+  const reach = boundsOf(eraser);
   for (const stroke of strokes) {
     const hitRadius = radius + stroke.width / 2;
+    // 지우개가 닿을 수 없는 선은 점을 나눠 보지 않고 그대로 둔다.
+    const box = boundsOf(stroke.points);
+    if (
+      box.left - hitRadius > reach.right ||
+      box.right + hitRadius < reach.left ||
+      box.top - hitRadius > reach.bottom ||
+      box.bottom + hitRadius < reach.top
+    ) {
+      result.push(stroke);
+      continue;
+    }
     const samples = sampleStroke(stroke.points, Math.max(radius / 2, 0.5));
     const runs: number[][] = [];
     let run: number[] = [];
@@ -208,14 +243,50 @@ export function countStrokePoints(strokes: readonly DrawingStroke[]): number {
   return total;
 }
 
+/** 노드 목록(하위 캔버스 포함) 안에 그린 점의 총합. 복제 전 한도 확인에 쓴다. */
+export function countNodesDrawingPoints(
+  nodes: readonly WorkspaceNode[],
+): number {
+  let total = 0;
+  for (const node of nodes) {
+    if (node.type === "canvas_node")
+      total += countDocumentDrawingPoints(node.document);
+  }
+  return total;
+}
+
 /** 문서와 모든 하위 캔버스에 그린 점의 총합. */
 export function countDocumentDrawingPoints(
   document: WorkspaceDocument,
 ): number {
-  let total = countStrokePoints(document.drawing?.strokes ?? []);
-  for (const node of walkWorkspaceNodes(document)) {
-    if (node.type === "canvas_node")
-      total += countStrokePoints(node.document.drawing?.strokes ?? []);
-  }
-  return total;
+  return (
+    countStrokePoints(document.drawing?.strokes ?? []) +
+    countNodesDrawingPoints(document.nodes)
+  );
+}
+
+/** path 공간의 선을 nextStrokes로 바꾸면 공간·프로젝트 한도를 넘는지. */
+export function exceedsDrawingLimits(
+  root: WorkspaceDocument,
+  path: readonly string[],
+  nextStrokes: readonly DrawingStroke[],
+): boolean {
+  if (nextStrokes.length > MAX_STROKES_PER_CANVAS) return true;
+  const current = resolveWorkspacePath(root, [...path]).document;
+  const total =
+    countDocumentDrawingPoints(root) -
+    countStrokePoints(current.drawing?.strokes ?? []) +
+    countStrokePoints(nextStrokes);
+  return total > MAX_DRAWING_POINTS;
+}
+
+/** 공간의 선 목록 끝에 선 하나를 붙인다. */
+export function appendStroke(
+  document: WorkspaceDocument,
+  stroke: DrawingStroke,
+): WorkspaceDocument {
+  return {
+    ...document,
+    drawing: { strokes: [...(document.drawing?.strokes ?? []), stroke] },
+  };
 }

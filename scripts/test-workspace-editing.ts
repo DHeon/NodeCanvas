@@ -27,6 +27,11 @@ import {
   fitNodeSize,
   replaceNodeImage,
 } from "../src/features/workspace/node-transform";
+import * as drawing from "../src/features/workspace/drawing";
+import {
+  resolveWorkspacePath,
+  updateWorkspaceAtPath,
+} from "../src/features/workspace/workspace-tree";
 
 function fixture(): WorkspaceDocument {
   return {
@@ -199,6 +204,8 @@ const names = [
   "getConnectionHover",
   "startNodeConnection",
   "startPan",
+  "startDrawing",
+  "eraseAlong",
 ];
 const functions = new Map<string, string>();
 let clearGesture = "";
@@ -261,6 +268,8 @@ type TestState = {
   hoveredElement: TestElement | null;
   calls: string[];
   spaceHeld?: boolean;
+  tool?: "select" | "pen" | "eraser";
+  canvasPath?: string[];
 };
 type Handlers = Record<string, (...args: unknown[]) => void>;
 const factory = new Function(
@@ -277,14 +286,26 @@ const factory = new Function(
   "getConnectionKey",
   "fitNodeSize",
   "replaceNodeImage",
+  "resolveWorkspacePath",
+  "updateWorkspaceAtPath",
+  "drawing",
   `
-  const workspace = state.history.present;
+  const { appendPoint, appendStroke, countDocumentDrawingPoints, eraseStrokes,
+    exceedsDrawingLimits, simplifyPoints, MAX_DRAWING_POINTS, MAX_STROKES_PER_CANVAS } = drawing;
+  const ERASER_RADIUS = 10;
+  const DRAW_MIN_DISTANCE = 1.5;
+  const DRAWING_LIMIT_NOTICE = "limit";
+  const canvasPath = state.canvasPath ?? [];
+  const activeDepth = canvasPath.length;
+  const rootDocument = state.history.present;
+  const rootDocumentRef = { get current() { return state.history.present; } };
+  const workspace = resolveWorkspacePath(state.history.present, canvasPath).document;
   const selectedNodeIds = state.selected;
   const selectedConnectionId = state.selectedConnection;
   const camera = state.camera;
   const pendingImagesRef = { current: [] };
   const dispatchHistory = action => { state.history = workspaceHistoryReducer(state.history, action); };
-  const setWorkspace = update => dispatchHistory({ type: "change", update });
+  const setWorkspace = update => dispatchHistory({ type: "change", update: root => updateWorkspaceAtPath(root, canvasPath, update) });
   const setSelectedNodeIds = update => { state.selected = typeof update === "function" ? update(state.selected) : update; };
   const setSelectedConnectionId = value => { state.selectedConnection = value; };
   const setCamera = update => { state.camera = update(state.camera); };
@@ -292,8 +313,6 @@ const factory = new Function(
   const setConnectionDraft = draft => { state.draft = draft; };
   const setIsPanning = value => { state.panning = value; };
   // 단축키가 부르는 화면 밖 동작은 호출 기록만 남긴다.
-  const activeDepth = 0;
-  const canvasPath = [];
   const NUDGE_STEP = 8;
   const NUDGE_STEP_LARGE = 40;
   const saveWorkspace = async () => { state.calls.push("save"); };
@@ -304,11 +323,13 @@ const factory = new Function(
   const fitCanvas = () => { state.calls.push("fit"); };
   const duplicateSelection = () => { state.calls.push("duplicate"); };
   // 그리기 도구는 선택 모드로 시작한다. 도구 전환은 호출 기록만 남긴다.
-  const tool = "select";
+  const tool = state.tool ?? "select";
+  const pen = { color: "teal", width: 4 };
+  const setEraserPointer = () => {};
   const changeTool = next => { state.calls.push("tool:" + next); };
   const setDrawDraft = () => {};
   const spaceHeldRef = { current: state.spaceHeld };
-  const setNotice = () => {};
+  const setNotice = message => { state.calls.push("notice:" + message); };
   ${compiled}
   return { ${names.join(", ")}, clearGesture };
 `,
@@ -365,6 +386,9 @@ function setup(selected: string[] = []) {
         getConnectionKey,
         fitNodeSize,
         replaceNodeImage,
+        resolveWorkspacePath,
+        updateWorkspaceAtPath,
+        drawing,
       )[name](...args);
     },
   };
@@ -1079,4 +1103,127 @@ test("Space를 누른 왼쪽 드래그는 끝까지 화면을 옮긴다", () => 
   assert.deepEqual(h.state.camera, { x: 60, y: 70, zoom: 0.5 });
   h.call("moveGesture", pointer({ clientX: 120, clientY: 90 }));
   assert.deepEqual(h.state.camera, { x: 110, y: 70, zoom: 0.5 });
+});
+
+function drawingFixture(strokes: drawing.DrawingStroke[]): WorkspaceDocument {
+  return {
+    canvas: { width: 2000, height: 1200, infinite: true },
+    connections: [],
+    nodes: [
+      {
+        id: "sub",
+        type: "canvas_node",
+        position: { x: 0, y: 0 },
+        width: 260,
+        height: 140,
+        title: "하위",
+        document: {
+          canvas: { width: 2000, height: 1200, infinite: true },
+          connections: [],
+          nodes: [],
+        },
+      },
+    ],
+    drawing: { strokes },
+  };
+}
+
+const horizontal: drawing.DrawingStroke = {
+  id: "h",
+  color: "teal",
+  width: 4,
+  points: [0, 0, 200, 0],
+};
+
+// 뷰포트 left 10, top 20, 카메라 (10, 20) 배율 0.5 → 화면 (x, y)는 캔버스 ((x-20)/0.5, (y-40)/0.5).
+function at(canvasX: number, canvasY: number, extra = {}) {
+  return pointer({
+    clientX: 20 + canvasX * 0.5,
+    clientY: 40 + canvasY * 0.5,
+    ...extra,
+  });
+}
+
+test("펜 선은 누른 순간의 공간에 한 단계로 붙고, 그사이 공간이 바뀌어도 섞이지 않는다", () => {
+  const h = setup();
+  h.state.history = createWorkspaceHistory(drawingFixture([]));
+  h.state.tool = "pen";
+  h.state.canvasPath = ["sub"];
+  h.call("startDrawing", at(0, 0));
+  h.call("moveGesture", at(100, 0));
+  h.call("moveGesture", at(100, 100));
+  // 그리는 도중 상위 공간으로 주소가 바뀐 상황.
+  h.state.canvasPath = [];
+  h.call("endGesture", at(100, 100, { type: "pointerup" }));
+  const root = h.state.history.present;
+  assert.deepEqual(root.drawing?.strokes, []);
+  const sub = resolveWorkspacePath(root, ["sub"]).document;
+  assert.equal(sub.drawing?.strokes.length, 1);
+  assert.deepEqual(sub.drawing?.strokes[0].points, [0, 0, 100, 0, 100, 100]);
+  assert.equal(h.state.history.past.length, 1);
+});
+
+test("지우개로 선이 나뉘어 공간 한도를 넘으면 반영하지 않고 알린다", () => {
+  const h = setup();
+  const dots = Array.from(
+    { length: drawing.MAX_STROKES_PER_CANVAS - 1 },
+    (_, i) => ({ ...horizontal, id: `d${i}`, points: [i * 10, 5000] }),
+  );
+  const original = drawingFixture([...dots, horizontal]);
+  h.state.history = createWorkspaceHistory(original);
+  h.state.tool = "eraser";
+  h.call("startDrawing", at(100, -50));
+  h.call("moveGesture", at(100, 50));
+  h.call("endGesture", at(100, 50, { type: "pointerup" }));
+  assert.equal(h.state.history.present, original);
+  assert.equal(h.state.history.past.length, 0);
+  assert.ok(h.state.calls.includes("notice:limit"));
+});
+
+test("지우개로 끝점이 늘어 프로젝트 점 한도를 넘으면 반영하지 않는다", () => {
+  const h = setup();
+  const full = Array.from(
+    { length: drawing.MAX_POINTS_PER_STROKE * 2 },
+    (_, k) => (k % 2 === 0 ? k : 9000),
+  );
+  const fillers = Array.from({ length: 74 }, (_, i) => ({
+    ...horizontal,
+    id: `f${i}`,
+    points: full,
+  }));
+  // 4,000점 74선 + 3,998점 1선 + 2점 가로선 = 정확히 30만 점.
+  // 가로선 가운데를 지우면 2점짜리 두 선(4점)이 되어 한도를 넘는다.
+  const rest = {
+    ...horizontal,
+    id: "rest",
+    points: full.slice(0, (drawing.MAX_POINTS_PER_STROKE - 2) * 2),
+  };
+  const original = drawingFixture([...fillers, rest, horizontal]);
+  h.state.history = createWorkspaceHistory(original);
+  h.state.tool = "eraser";
+  h.call("startDrawing", at(100, -50));
+  h.call("moveGesture", at(100, 50));
+  h.call("endGesture", at(100, 50, { type: "pointerup" }));
+  assert.ok(h.state.history.present === original, "문서가 바뀌었다");
+  assert.equal(h.state.history.past.length, 0);
+});
+
+test("지우개 문지르기는 한 단계로 되돌리고, Escape는 문지르기 전으로 돌린다", () => {
+  const h = setup();
+  const original = drawingFixture([horizontal]);
+  h.state.history = createWorkspaceHistory(original);
+  h.state.tool = "eraser";
+  h.call("startDrawing", at(100, -50));
+  h.call("moveGesture", at(100, 50));
+  h.call("endGesture", at(100, 50, { type: "pointerup" }));
+  assert.equal(h.state.history.present.drawing?.strokes.length, 2);
+  assert.equal(h.state.history.past.length, 1);
+
+  h.state.history = createWorkspaceHistory(original);
+  h.call("startDrawing", at(100, -50));
+  h.call("moveGesture", at(100, 50));
+  assert.equal(h.state.history.present.drawing?.strokes.length, 2);
+  h.call("handleWorkspaceKeyDown", key("Escape"));
+  assert.equal(h.state.history.present, original);
+  assert.equal(h.state.history.past.length, 0);
 });
