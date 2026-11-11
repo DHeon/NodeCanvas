@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import {
   MAX_POINTS_PER_STROKE,
+  MAX_STROKES_PER_CANVAS,
   appendPoint,
   countStrokePoints,
   eraseStrokes,
@@ -9,6 +11,7 @@ import {
   strokePath,
   type DrawingStroke,
 } from "../src/features/workspace/drawing";
+import { workspaceDocumentSchema } from "../src/features/workspace/workspace-schema";
 
 function line(): DrawingStroke {
   const points: number[] = [];
@@ -105,4 +108,109 @@ test("eraseStrokes: 점 하나짜리 선도 지운다", () => {
 
 test("countStrokePoints는 모든 선의 점을 센다", () => {
   assert.equal(countStrokePoints([line(), { ...line(), points: [1, 2] }]), 12);
+});
+
+function documentWith(drawing?: unknown, nodes: unknown[] = []) {
+  return {
+    canvas: { width: 2000, height: 1200, infinite: true },
+    nodes,
+    connections: [],
+    ...(drawing === undefined ? {} : { drawing }),
+  };
+}
+
+function stroke(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "s1",
+    color: "teal",
+    width: 4,
+    points: [0, 0, 10, 10],
+    ...overrides,
+  };
+}
+
+function canvasNode(id: string, drawing: unknown) {
+  return {
+    id,
+    type: "canvas_node",
+    position: { x: 0, y: 0 },
+    width: 260,
+    height: 140,
+    title: "하위",
+    document: documentWith(drawing),
+  };
+}
+
+function parses(document: unknown) {
+  return workspaceDocumentSchema.safeParse(document).success;
+}
+
+test("스키마: 그림이 없거나 비어 있는 문서를 받는다", () => {
+  assert.ok(parses(documentWith()));
+  assert.ok(parses(documentWith({ strokes: [] })));
+});
+
+test("스키마: 정상 선과 점 하나짜리 선을 받는다", () => {
+  assert.ok(
+    parses(
+      documentWith({
+        strokes: [stroke(), stroke({ id: "s2", points: [5, 5] })],
+      }),
+    ),
+  );
+});
+
+test("스키마: 잘못된 선을 거절한다", () => {
+  for (const bad of [
+    { color: "black" },
+    { width: 3 },
+    { points: [1, 2, 3] },
+    { points: [] },
+    { points: [0, Infinity] },
+  ]) {
+    assert.equal(
+      parses(documentWith({ strokes: [stroke(bad)] })),
+      false,
+      JSON.stringify(bad),
+    );
+  }
+  assert.equal(parses(documentWith({ strokes: [stroke(), stroke()] })), false);
+});
+
+test("스키마: 공간 하나의 선 수와 선 하나의 점 수를 제한한다", () => {
+  const many = Array.from({ length: MAX_STROKES_PER_CANVAS + 1 }, (_, i) =>
+    stroke({ id: `s${i}` }),
+  );
+  assert.equal(parses(documentWith({ strokes: many })), false);
+  const long = Array.from({ length: MAX_POINTS_PER_STROKE * 2 + 2 }, () => 1);
+  assert.equal(
+    parses(documentWith({ strokes: [stroke({ points: long })] })),
+    false,
+  );
+});
+
+test("스키마: 하위 캔버스의 그림도 검사한다", () => {
+  assert.equal(
+    parses(
+      documentWith(undefined, [
+        canvasNode(randomUUID(), { strokes: [stroke({ color: "black" })] }),
+      ]),
+    ),
+    false,
+  );
+});
+
+test("스키마: 프로젝트 전체 점 수를 제한한다", () => {
+  const full = Array.from({ length: MAX_POINTS_PER_STROKE * 2 }, () => 1);
+  // 공간 하나에 4,000점 선 75개 = 30만 점. 하위 캔버스 1점이 더해지면 초과.
+  const strokes = (prefix: string, count: number) =>
+    Array.from({ length: count }, (_, i) =>
+      stroke({ id: `${prefix}${i}`, points: full }),
+    );
+  const atLimit = documentWith({ strokes: strokes("a", 75) });
+  assert.ok(parses(atLimit));
+  const over = documentWith({ strokes: strokes("a", 75) }, [
+    canvasNode(randomUUID(), { strokes: [stroke({ points: [1, 1] })] }),
+  ]);
+  assert.equal(parses(over), false);
 });

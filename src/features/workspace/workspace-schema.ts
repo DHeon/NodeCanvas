@@ -3,6 +3,13 @@ import { z } from "zod";
 import type { WorkspaceDocument } from "./types";
 import { getConnectionKey, MAX_CONNECTIONS } from "./connections";
 import { CONNECTION_COLOR_KEYS } from "./connection-colors";
+import {
+  MAX_DRAWING_POINTS,
+  MAX_POINTS_PER_STROKE,
+  MAX_STROKES_PER_CANVAS,
+  STROKE_WIDTHS,
+  countStrokePoints,
+} from "./drawing";
 import { MAX_LINK_URL_LENGTH, normalizeLinkUrl } from "./link-embed";
 import {
   TEXT_ALIGN_KEYS,
@@ -20,6 +27,31 @@ const pointSchema = z.strictObject({
   x: z.number(),
   y: z.number(),
 });
+
+const strokeSchema = z.strictObject({
+  id: z.string().min(1).max(64),
+  color: z.enum(CONNECTION_COLOR_KEYS),
+  width: z.union(STROKE_WIDTHS.map((width) => z.literal(width))),
+  points: z
+    .array(z.number().finite())
+    .min(2)
+    .max(MAX_POINTS_PER_STROKE * 2)
+    .refine(
+      (points) => points.length % 2 === 0,
+      "좌표 개수가 올바르지 않습니다.",
+    ),
+});
+
+const drawingSchema = z
+  .strictObject({
+    strokes: z.array(strokeSchema).max(MAX_STROKES_PER_CANVAS),
+  })
+  .refine(
+    (drawing) =>
+      new Set(drawing.strokes.map((stroke) => stroke.id)).size ===
+      drawing.strokes.length,
+    { message: "선 ID가 중복되었습니다.", path: ["strokes"] },
+  );
 
 const nodeBaseSchema = z.strictObject({
   id: z.uuid(),
@@ -129,6 +161,7 @@ function documentSchemaAtDepth(depth: number): z.ZodType<WorkspaceDocument> {
       nodes: z.array(nodeSchema).max(MAX_WORKSPACE_NODES),
       // 이전에 저장한 문서에는 연결선 항목이 없어도 열린다.
       connections: z.array(connectionSchema).max(MAX_CONNECTIONS).default([]),
+      drawing: drawingSchema.optional(),
     })
     .refine(
       (document) => {
@@ -180,6 +213,21 @@ function documentSchemaAtDepth(depth: number): z.ZodType<WorkspaceDocument> {
 
 export const workspaceDocumentSchema = documentSchemaAtDepth(0).superRefine(
   (document, context) => {
+    let drawingPoints = countStrokePoints(document.drawing?.strokes ?? []);
+    for (const node of walkWorkspaceNodes(document)) {
+      if (node.type === "canvas_node")
+        drawingPoints += countStrokePoints(
+          node.document.drawing?.strokes ?? [],
+        );
+    }
+    if (drawingPoints > MAX_DRAWING_POINTS) {
+      context.addIssue({
+        code: "custom",
+        message: "프로젝트의 그림이 너무 큽니다.",
+      });
+      return;
+    }
+
     const ids = new Set<string>();
     for (const node of walkWorkspaceNodes(document)) {
       if (ids.has(node.id)) {

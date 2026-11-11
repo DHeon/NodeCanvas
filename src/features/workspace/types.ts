@@ -1,3 +1,4 @@
+import type { DrawingStroke } from "./drawing";
 import type { ConnectionColor } from "./connection-colors";
 import type { ConnectionLineStyle } from "./connections";
 import type { TextStyle } from "./text-style";
@@ -98,7 +99,11 @@ export type WorkspaceDocument = {
   };
   nodes: WorkspaceNode[];
   connections: NodeConnection[];
+  // 공간마다 따로 저장하는 손그림. 없으면 그림 없음.
+  drawing?: { strokes: DrawingStroke[] };
 };
 
 //텍스트 노드 수정용
 export type TextNodeContentPatch = Partial<Pick<TextNode, "title" | "text">>;
+
+export type { DrawingStroke };
