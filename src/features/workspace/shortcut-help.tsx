@@ -17,6 +17,14 @@ const groups: { title: string; items: [string, string][] }[] = [
     ],
   },
   {
+    title: "그리기",
+    items: [
+      ["P", "펜 켜기·끄기"],
+      ["E", "지우개 켜기·끄기"],
+      ["Esc", "그리기 끝내기"],
+    ],
+  },
+  {
     title: "선택·편집",
     items: [
       ["Ctrl + A", "모두 선택"],

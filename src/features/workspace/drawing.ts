@@ -1,4 +1,6 @@
 import type { ConnectionColor } from "./connection-colors";
+import type { WorkspaceDocument } from "./types";
+import { walkWorkspaceNodes } from "./workspace-tree";
 
 // 캔버스 배경에 손으로 그린 선. 사용자가 고르거나 옮기는 객체가 아니라
 // 저장과 지우개 계산을 위한 단위일 뿐이다.
@@ -203,5 +205,17 @@ export function eraseStrokes(
 export function countStrokePoints(strokes: readonly DrawingStroke[]): number {
   let total = 0;
   for (const stroke of strokes) total += stroke.points.length / 2;
+  return total;
+}
+
+/** 문서와 모든 하위 캔버스에 그린 점의 총합. */
+export function countDocumentDrawingPoints(
+  document: WorkspaceDocument,
+): number {
+  let total = countStrokePoints(document.drawing?.strokes ?? []);
+  for (const node of walkWorkspaceNodes(document)) {
+    if (node.type === "canvas_node")
+      total += countStrokePoints(node.document.drawing?.strokes ?? []);
+  }
   return total;
 }

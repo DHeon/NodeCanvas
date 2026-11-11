@@ -5,12 +5,14 @@ import {
   MAX_POINTS_PER_STROKE,
   MAX_STROKES_PER_CANVAS,
   appendPoint,
+  countDocumentDrawingPoints,
   countStrokePoints,
   eraseStrokes,
   simplifyPoints,
   strokePath,
   type DrawingStroke,
 } from "../src/features/workspace/drawing";
+import type { WorkspaceDocument } from "../src/features/workspace/types";
 import { workspaceDocumentSchema } from "../src/features/workspace/workspace-schema";
 
 function line(): DrawingStroke {
@@ -213,4 +215,15 @@ test("스키마: 프로젝트 전체 점 수를 제한한다", () => {
     canvasNode(randomUUID(), { strokes: [stroke({ points: [1, 1] })] }),
   ]);
   assert.equal(parses(over), false);
+});
+
+test("countDocumentDrawingPoints는 하위 캔버스까지 모든 그림의 점을 센다", () => {
+  const document = documentWith({ strokes: [stroke()] }, [
+    canvasNode(randomUUID(), { strokes: [stroke({ points: [1, 1] })] }),
+  ]) as unknown as WorkspaceDocument;
+  assert.equal(countDocumentDrawingPoints(document), 3);
+  assert.equal(
+    countDocumentDrawingPoints(documentWith() as unknown as WorkspaceDocument),
+    0,
+  );
 });

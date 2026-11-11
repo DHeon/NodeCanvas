@@ -167,3 +167,21 @@ export function PlayIcon(props: IconProps) {
     </svg>
   );
 }
+
+export function PenIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4 20l1.2-4.6L15.6 5a2 2 0 0 1 2.8 0l.6.6a2 2 0 0 1 0 2.8L8.6 18.8z" />
+      <path d="m13.5 7 3.5 3.5" />
+    </Icon>
+  );
+}
+
+export function EraserIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M9 19 3.7 13.7a1.8 1.8 0 0 1 0-2.5l7.5-7.5a1.8 1.8 0 0 1 2.5 0l5.6 5.6a1.8 1.8 0 0 1 0 2.5L12 19z" />
+      <path d="m8 9 7 7M9 19h11" />
+    </Icon>
+  );
+}

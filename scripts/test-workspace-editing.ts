@@ -198,6 +198,7 @@ const names = [
   "getCanvasPoint",
   "getConnectionHover",
   "startNodeConnection",
+  "startPan",
 ];
 const functions = new Map<string, string>();
 let clearGesture = "";
@@ -259,6 +260,7 @@ type TestState = {
   } | null;
   hoveredElement: TestElement | null;
   calls: string[];
+  spaceHeld?: boolean;
 };
 type Handlers = Record<string, (...args: unknown[]) => void>;
 const factory = new Function(
@@ -301,6 +303,12 @@ const factory = new Function(
   const zoomBy = factor => { state.calls.push("zoom:" + factor); };
   const fitCanvas = () => { state.calls.push("fit"); };
   const duplicateSelection = () => { state.calls.push("duplicate"); };
+  // 그리기 도구는 선택 모드로 시작한다. 도구 전환은 호출 기록만 남긴다.
+  const tool = "select";
+  const changeTool = next => { state.calls.push("tool:" + next); };
+  const setDrawDraft = () => {};
+  const spaceHeldRef = { current: state.spaceHeld };
+  const setNotice = () => {};
   ${compiled}
   return { ${names.join(", ")}, clearGesture };
 `,
@@ -1053,4 +1061,22 @@ test("단축키: Ctrl+S는 입력칸에서도 저장, Ctrl+A 전체 선택, 방�
   // 입력칸 안의 일반 글자는 단축키가 아니다.
   h.call("handleWorkspaceKeyDown", key("t", { target: new TestElement(true) }));
   assert.equal(h.state.calls.length, 5);
+
+  // P·E는 펜·지우개를 켠다.
+  h.call("handleWorkspaceKeyDown", key("p"));
+  h.call("handleWorkspaceKeyDown", key("e"));
+  assert.deepEqual(h.state.calls.slice(5), ["tool:pen", "tool:eraser"]);
+});
+
+test("Space를 누른 왼쪽 드래그는 끝까지 화면을 옮긴다", () => {
+  const h = setup();
+  h.state.spaceHeld = true;
+  const currentTarget = { focus() {}, setPointerCapture() {} };
+  h.call("startPan", pointer({ currentTarget }));
+  assert.equal(h.state.panning, true);
+  // 왼쪽 버튼만 눌린 채(buttons: 1) 움직여도 이동이 이어진다.
+  h.call("moveGesture", pointer({ clientX: 70, clientY: 90 }));
+  assert.deepEqual(h.state.camera, { x: 60, y: 70, zoom: 0.5 });
+  h.call("moveGesture", pointer({ clientX: 120, clientY: 90 }));
+  assert.deepEqual(h.state.camera, { x: 110, y: 70, zoom: 0.5 });
 });

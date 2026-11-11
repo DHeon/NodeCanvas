@@ -8,7 +8,7 @@ import {
   MAX_POINTS_PER_STROKE,
   MAX_STROKES_PER_CANVAS,
   STROKE_WIDTHS,
-  countStrokePoints,
+  countDocumentDrawingPoints,
 } from "./drawing";
 import { MAX_LINK_URL_LENGTH, normalizeLinkUrl } from "./link-embed";
 import {
@@ -213,13 +213,7 @@ function documentSchemaAtDepth(depth: number): z.ZodType<WorkspaceDocument> {
 
 export const workspaceDocumentSchema = documentSchemaAtDepth(0).superRefine(
   (document, context) => {
-    let drawingPoints = countStrokePoints(document.drawing?.strokes ?? []);
-    for (const node of walkWorkspaceNodes(document)) {
-      if (node.type === "canvas_node")
-        drawingPoints += countStrokePoints(
-          node.document.drawing?.strokes ?? [],
-        );
-    }
+    const drawingPoints = countDocumentDrawingPoints(document);
     if (drawingPoints > MAX_DRAWING_POINTS) {
       context.addIssue({
         code: "custom",

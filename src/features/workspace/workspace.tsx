@@ -38,7 +38,24 @@ import {
 import WorkspaceProperties from "./workspace-properties";
 import useImageUploads from "./use-image-uploads";
 import { fitNodeSize, replaceNodeImage, transformNode } from "./node-transform";
-import WorkspaceToolbar from "./workspace-toolbar";
+import WorkspaceToolbar, { type WorkspaceTool } from "./workspace-toolbar";
+import DrawingLayer from "./drawing-layer";
+import DrawOptions from "./draw-options";
+import {
+  readPenSettings,
+  writePenSettings,
+  type PenSettings,
+} from "./pen-settings";
+import {
+  appendPoint,
+  countDocumentDrawingPoints,
+  eraseStrokes,
+  MAX_DRAWING_POINTS,
+  MAX_STROKES_PER_CANVAS,
+  simplifyPoints,
+  type DrawingStroke,
+  type StrokeWidth,
+} from "./drawing";
 import WorkspaceMenu from "./workspace-menu";
 import { applyCanvasSettings, getFitCamera } from "./canvas-settings";
 import ConnectionLayer from "./connection-layer";
@@ -93,6 +110,8 @@ type Gesture =
   | {
       kind: "pan";
       pointerId: number;
+      // 휠 클릭(1) 또는 Space + 왼쪽 버튼(0).
+      button: number;
       startPointer: Point;
       startCamera: Point;
     }
@@ -129,7 +148,43 @@ type Gesture =
       pointerId: number;
       startPointer: Point;
       source: ConnectionEndpoint;
+    }
+  | {
+      // 펜: 손을 뗄 때 시작한 공간(path)에 한 번에 붙인다.
+      kind: "draw";
+      pointerId: number;
+      startPointer: Point;
+      path: string[];
+      points: number[];
+      color: ConnectionColor;
+      width: StrokeWidth;
+      zoom: number;
+    }
+  | {
+      // 지우개: begin~commit 사이에 문지른 것 전체가 Undo 한 단계.
+      kind: "erase";
+      pointerId: number;
+      startPointer: Point;
+      path: string[];
+      last: Point;
+      zoom: number;
+      limitHit: boolean;
     };
+
+// 화면 기준 거리. 캔버스 단위로는 zoom으로 나눈다.
+const DRAW_MIN_DISTANCE = 1.5;
+const ERASER_RADIUS = 10;
+const DRAWING_LIMIT_NOTICE = `그림은 한 공간에 선 ${MAX_STROKES_PER_CANVAS.toLocaleString()}개, 프로젝트 전체에 점 ${(MAX_DRAWING_POINTS / 10000).toLocaleString()}만 개까지 그릴 수 있어요.`;
+
+function appendStroke(
+  document: WorkspaceDocument,
+  stroke: DrawingStroke,
+): WorkspaceDocument {
+  return {
+    ...document,
+    drawing: { strokes: [...(document.drawing?.strokes ?? []), stroke] },
+  };
+}
 
 type SelectionRect = Point & { width: number; height: number };
 
@@ -204,9 +259,11 @@ export default function Workspace({
   }, [canvasPath, activeDepth]);
 
   const workspaceRef = useRef(workspace);
+  const rootDocumentRef = useRef(rootDocument);
   useLayoutEffect(() => {
     workspaceRef.current = workspace;
-  }, [workspace]);
+    rootDocumentRef.current = rootDocument;
+  }, [workspace, rootDocument]);
   const setWorkspace = useCallback(
     (update: (document: WorkspaceDocument) => WorkspaceDocument) => {
       dispatchHistory({
@@ -243,6 +300,10 @@ export default function Workspace({
       ?.focus({ preventScroll: true });
   });
   const gestureRef = useRef<Gesture | null>(null); //드래그 시작 시 위치와 어떤거 이동할지
+  const [tool, setTool] = useState<WorkspaceTool>("select");
+  const [pen, setPen] = useState(readPenSettings);
+  const [drawDraft, setDrawDraft] = useState<DrawingStroke | null>(null);
+  const [eraserPointer, setEraserPointer] = useState<Point | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageTargetRef = useRef<{ nodeId: string; path: string[] } | null>(
@@ -362,9 +423,45 @@ export default function Workspace({
     setIsPanning(false);
     setSelectionRect(null);
     setConnectionDraft(null);
+    setDrawDraft(null);
 
-    if (gesture?.kind === "node" || gesture?.kind === "resize") {
+    if (
+      gesture?.kind === "node" ||
+      gesture?.kind === "resize" ||
+      gesture?.kind === "erase"
+    ) {
       dispatchHistory({ type: "commit" });
+    }
+    if (gesture?.kind === "erase" && gesture.limitHit) {
+      setNotice(DRAWING_LIMIT_NOTICE);
+    }
+    if (gesture?.kind === "draw" && gesture.points.length) {
+      const points = simplifyPoints(gesture.points, 0.5 / gesture.zoom);
+      const root = rootDocumentRef.current;
+      const strokes =
+        resolveWorkspacePath(root, gesture.path).document.drawing?.strokes ??
+        [];
+      if (
+        strokes.length >= MAX_STROKES_PER_CANVAS ||
+        countDocumentDrawingPoints(root) + points.length / 2 >
+          MAX_DRAWING_POINTS
+      ) {
+        setNotice(DRAWING_LIMIT_NOTICE);
+      } else {
+        const stroke: DrawingStroke = {
+          id: uuidv4(),
+          color: gesture.color,
+          width: gesture.width,
+          points,
+        };
+        dispatchHistory({
+          type: "change",
+          update: (current) =>
+            updateWorkspaceAtPath(current, gesture.path, (document) =>
+              appendStroke(document, stroke),
+            ),
+        });
+      }
     }
 
     for (const { nodeId, image, path } of pendingImagesRef.current) {
@@ -649,6 +746,7 @@ export default function Workspace({
     gestureRef.current = {
       kind: "pan",
       pointerId: event.pointerId,
+      button: event.button,
       startPointer: {
         x: event.clientX,
         y: event.clientY,
@@ -726,6 +824,104 @@ export default function Workspace({
     if (!event.shiftKey) setSelectedNodeIds([]);
   }
 
+  function changeTool(next: WorkspaceTool) {
+    if (gestureRef.current) return;
+    setTool(next);
+    setEraserPointer(null);
+    if (next !== "select") {
+      setSelectedNodeIds([]);
+      setSelectedConnectionId(null);
+    }
+  }
+
+  function changePen(patch: Partial<PenSettings>) {
+    const next = { ...pen, ...patch };
+    setPen(next);
+    writePenSettings(next);
+  }
+
+  function eraseAlong(
+    gesture: Extract<Gesture, { kind: "erase" }>,
+    eraser: number[],
+  ) {
+    dispatchHistory({
+      type: "change",
+      update: (root) =>
+        updateWorkspaceAtPath(root, gesture.path, (document) => {
+          const strokes = document.drawing?.strokes;
+          if (!strokes?.length) return document;
+          const next = eraseStrokes(
+            strokes,
+            eraser,
+            ERASER_RADIUS / gesture.zoom,
+            uuidv4,
+          );
+          if (next === strokes) return document;
+          // 선이 잘게 나뉘어 한도를 넘으면 이번 문지르기는 반영하지 않는다.
+          if (next.length > MAX_STROKES_PER_CANVAS) {
+            gesture.limitHit = true;
+            return document;
+          }
+          return { ...document, drawing: { strokes: next } };
+        }),
+    });
+  }
+
+  function startDrawing(event: ReactPointerEvent<HTMLDivElement>) {
+    const viewport = viewportRef.current;
+    if (event.button !== 0 || gestureRef.current || !viewport) return;
+    const point = getCanvasPoint(event.clientX, event.clientY);
+    if (!point) return;
+    event.preventDefault();
+    const path = canvasPath.slice(0, activeDepth);
+    const startPointer = { x: event.clientX, y: event.clientY };
+
+    if (tool === "pen") {
+      if (
+        (workspace.drawing?.strokes.length ?? 0) >= MAX_STROKES_PER_CANVAS ||
+        countDocumentDrawingPoints(rootDocument) >= MAX_DRAWING_POINTS
+      ) {
+        setNotice(DRAWING_LIMIT_NOTICE);
+        return;
+      }
+      viewport.focus({ preventScroll: true });
+      viewport.setPointerCapture(event.pointerId);
+      const gesture: Gesture = {
+        kind: "draw",
+        pointerId: event.pointerId,
+        startPointer,
+        path,
+        points: appendPoint([], point.x, point.y, 0),
+        color: pen.color,
+        width: pen.width,
+        zoom: camera.zoom,
+      };
+      gestureRef.current = gesture;
+      setDrawDraft({
+        id: "draft",
+        color: pen.color,
+        width: pen.width,
+        points: gesture.points,
+      });
+      return;
+    }
+
+    viewport.focus({ preventScroll: true });
+    viewport.setPointerCapture(event.pointerId);
+    dispatchHistory({ type: "begin" });
+    const gesture: Gesture = {
+      kind: "erase",
+      pointerId: event.pointerId,
+      startPointer,
+      path,
+      last: point,
+      zoom: camera.zoom,
+      limitHit: false,
+    };
+    gestureRef.current = gesture;
+    eraseAlong(gesture, [point.x, point.y]);
+  }
+
   function beginTextEdit() {
     if (!gestureRef.current) dispatchHistory({ type: "begin" });
   }
@@ -789,8 +985,15 @@ export default function Workspace({
           setSelectedNodeIds(gesture.initialSelection);
         } else if (gesture.kind === "pan") {
           setCamera((current) => ({ ...current, ...gesture.startCamera }));
+        } else if (gesture.kind === "draw") {
+          // 그리던 선은 버린다.
+          gesture.points = [];
+        } else if (gesture.kind === "erase") {
+          dispatchHistory({ type: "cancel" });
         }
         clearGesture();
+      } else if (tool !== "select") {
+        changeTool("select");
       } else {
         setSelectedNodeIds([]);
         setSelectedConnectionId(null);
@@ -864,6 +1067,8 @@ export default function Workspace({
       },
       c: () => addNode("canvas_node"),
       l: () => addNode("link_node"),
+      p: () => changeTool(tool === "pen" ? "select" : "pen"),
+      e: () => changeTool(tool === "eraser" ? "select" : "eraser"),
     };
     const action =
       zoomActions[key] ?? (event.shiftKey ? undefined : createActions[key]);
@@ -1124,7 +1329,8 @@ export default function Workspace({
 
     if (!gesture || gesture.pointerId !== event.pointerId) return;
 
-    const buttonMask = gesture.kind === "pan" ? 4 : 1;
+    // 휠 클릭 이동만 가운데 버튼을 보고, 나머지는 왼쪽 버튼이 눌려 있는지 본다.
+    const buttonMask = gesture.kind === "pan" && gesture.button === 1 ? 4 : 1;
 
     if ((event.buttons & buttonMask) === 0) {
       endGesture(event);
@@ -1170,6 +1376,40 @@ export default function Workspace({
             : pointer,
         ...hover,
       });
+      return;
+    }
+
+    if (gesture.kind === "draw") {
+      const pointer = getCanvasPoint(event.clientX, event.clientY);
+      if (!pointer) return;
+      const points = appendPoint(
+        gesture.points,
+        pointer.x,
+        pointer.y,
+        DRAW_MIN_DISTANCE / camera.zoom,
+      );
+      if (points === gesture.points) return;
+      gesture.points = points;
+      setDrawDraft({
+        id: "draft",
+        color: gesture.color,
+        width: gesture.width,
+        points,
+      });
+      return;
+    }
+
+    if (gesture.kind === "erase") {
+      const pointer = getCanvasPoint(event.clientX, event.clientY);
+      if (!pointer) return;
+      setEraserPointer({ x: event.clientX, y: event.clientY });
+      eraseAlong(gesture, [
+        gesture.last.x,
+        gesture.last.y,
+        pointer.x,
+        pointer.y,
+      ]);
+      gesture.last = pointer;
       return;
     }
 
@@ -2024,7 +2264,17 @@ export default function Workspace({
           onAddCanvasNode={() => addNode("canvas_node")}
           onAddLinkNode={() => addNode("link_node")}
           canvasDepthLimit={activeDepth >= MAX_CANVAS_DEPTH}
+          tool={tool}
+          onToolChange={changeTool}
         />
+        {tool === "pen" && (
+          <DrawOptions
+            color={pen.color}
+            width={pen.width}
+            onColor={(color) => changePen({ color })}
+            onWidth={(width) => changePen({ width })}
+          />
+        )}
         <div
           ref={viewportRef}
           tabIndex={-1}
@@ -2043,16 +2293,23 @@ export default function Workspace({
               ? "grabbing"
               : spaceHeld
                 ? "grab"
-                : connectionDraft
+                : connectionDraft || tool === "pen"
                   ? "crosshair"
-                  : "default",
+                  : tool === "eraser"
+                    ? "none"
+                    : "default",
           }}
           role="region"
           aria-roledescription="캔버스"
           aria-label={`${currentCanvas ? canvasNodeTitle(currentCanvas) : projectTitle} 캔버스, 노드 ${workspace.nodes.length}개`}
           onPointerDownCapture={startPan}
-          onPointerDown={startMarquee}
-          onPointerMove={moveGesture}
+          onPointerDown={tool === "select" ? startMarquee : startDrawing}
+          onPointerMove={(event) => {
+            if (tool === "eraser")
+              setEraserPointer({ x: event.clientX, y: event.clientY });
+            moveGesture(event);
+          }}
+          onPointerLeave={() => setEraserPointer(null)}
           onPointerUp={endGesture}
           onPointerCancel={endGesture}
           onLostPointerCapture={endGesture}
@@ -2074,6 +2331,10 @@ export default function Workspace({
               transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.zoom})`,
             }}
           >
+            <DrawingLayer
+              strokes={workspace.drawing?.strokes ?? []}
+              draft={drawDraft}
+            />
             <ConnectionLayer
               canvas={workspace.canvas}
               nodes={workspace.nodes}

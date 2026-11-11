@@ -1,12 +1,21 @@
 "use client";
 
+import { EraserIcon, PenIcon } from "./icons";
+
+export type WorkspaceTool = "select" | "pen" | "eraser";
+
 type WorkspaceToolbarProps = {
   onAddTextNode: () => void;
   onAddImageNode: () => void;
   onAddCanvasNode: () => void;
   onAddLinkNode: () => void;
   canvasDepthLimit: boolean;
+  tool: WorkspaceTool;
+  onToolChange: (tool: WorkspaceTool) => void;
 };
+
+const toolButtonClass =
+  "flex h-10 w-10 items-center justify-center rounded-[11px] text-bark-soft hover:bg-bark/6 focus-visible:outline-2 focus-visible:outline-moss-deep active:bg-bark/10 aria-pressed:bg-moss-wash aria-pressed:text-ink";
 
 export default function WorkspaceToolbar({
   onAddTextNode,
@@ -14,6 +23,8 @@ export default function WorkspaceToolbar({
   onAddCanvasNode,
   onAddLinkNode,
   canvasDepthLimit,
+  tool,
+  onToolChange,
 }: WorkspaceToolbarProps) {
   return (
     <aside className="absolute top-1/2 left-[18px] z-35 flex -translate-y-1/2 flex-col rounded-2xl border border-bark/10 bg-white/95 p-[7px] shadow-float backdrop-blur-[18px]">
@@ -119,6 +130,33 @@ export default function WorkspaceToolbar({
             <path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1" />
             <path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1" />
           </svg>
+        </button>
+      </div>
+      <div className="mx-1.5 my-[7px] h-px bg-rule" />
+      <div
+        role="group"
+        aria-label="그리기 도구"
+        className="flex flex-col gap-[5px]"
+      >
+        <button
+          type="button"
+          onClick={() => onToolChange(tool === "pen" ? "select" : "pen")}
+          aria-pressed={tool === "pen"}
+          aria-label="펜"
+          title="펜 (P)"
+          className={toolButtonClass}
+        >
+          <PenIcon size={22} />
+        </button>
+        <button
+          type="button"
+          onClick={() => onToolChange(tool === "eraser" ? "select" : "eraser")}
+          aria-pressed={tool === "eraser"}
+          aria-label="지우개"
+          title="지우개 (E)"
+          className={toolButtonClass}
+        >
+          <EraserIcon size={22} />
         </button>
       </div>
     </aside>
