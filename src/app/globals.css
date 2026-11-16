@@ -41,6 +41,24 @@
   --shadow-float: 0 16px 45px -12px #3445242e, 0 2px 5px #34452408;
 }
 
+/* 검색 목록에서 가리킨 노드가 잠깐 밝아진다. 움직임 줄이기 설정이면 링만 남는다. */
+@keyframes search-glow {
+  0% {
+    box-shadow: 0 0 0 0 #b6c794cc;
+  }
+  100% {
+    box-shadow: 0 0 0 14px #b6c79400;
+  }
+}
+.search-glow {
+  animation: search-glow 400ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .search-glow {
+    animation: none;
+  }
+}
+
 ::selection {
   background: #d6dfc1;
   color: #252c26;

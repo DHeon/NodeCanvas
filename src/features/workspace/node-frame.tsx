@@ -6,7 +6,9 @@ import {
   type ReactNode,
 } from "react";
 import { CONNECTION_SIDES } from "./connections";
+import { connectionColor } from "./connection-colors";
 import type {
+  TagDefinition,
   ConnectionSide,
   TextNodeContentPatch,
   WorkspaceNode,
@@ -44,7 +46,15 @@ export type NodeFrameProps = {
   onEditStart: () => void;
   onEditEnd: () => void;
   children: ReactNode;
+  /** 루트 태그 목록에서 찾아 둔 이 노드의 태그(붙인 순서). */
+  tags?: TagDefinition[];
+  /** 검색 중 표시 상태. "dimmed"면 흐리게. */
+  searchState?: "none" | "match" | "dimmed";
+  /** 검색 목록에서 가리키고 있는 노드. */
+  highlighted?: boolean;
 };
+
+const MAX_TAG_DOTS = 3;
 
 export default function NodeFrame({
   node,
@@ -60,7 +70,11 @@ export default function NodeFrame({
   onEditStart,
   onEditEnd,
   children,
+  tags = [],
+  searchState = "none",
+  highlighted = false,
 }: NodeFrameProps) {
+  const tagNames = tags.map((tag) => tag.name).join(", ");
   const label =
     node.type === "canvas_node"
       ? "캔버스"
@@ -88,8 +102,9 @@ export default function NodeFrame({
   return (
     <article
       tabIndex={-1}
-      aria-label={`${label} 노드: ${node.title.trim() || "제목 없음"}${selected ? ", 선택됨" : ""}`}
+      aria-label={`${label} 노드: ${node.title.trim() || "제목 없음"}${tagNames ? `, 태그: ${tagNames}` : ""}${selected ? ", 선택됨" : ""}`}
       data-node-id={node.id}
+      data-search-highlight={highlighted ? "" : undefined}
       data-node-type={node.type}
       onPointerDown={(event) => {
         if (event.button !== 0) return;
@@ -104,7 +119,7 @@ export default function NodeFrame({
         }
         onSelect(node.id, event.shiftKey);
       }}
-      className={`group/node absolute flex flex-col rounded-xl border bg-white transition-[box-shadow,border-color] duration-150 outline-none ${selected ? "border-moss-deep shadow-card-selected" : "border-rule shadow-card hover:border-sage-hover hover:shadow-card-lift"}`}
+      className={`group/node absolute flex flex-col rounded-xl border bg-white transition-[box-shadow,border-color,opacity] duration-150 outline-none motion-reduce:transition-none ${selected ? "border-moss-deep shadow-card-selected" : "border-rule shadow-card hover:border-sage-hover hover:shadow-card-lift"} ${searchState === "dimmed" ? "opacity-25" : ""} ${highlighted ? "search-glow ring-2 ring-moss-deep ring-offset-2 ring-offset-field" : ""}`}
       style={{
         left: node.position.x,
         top: node.position.y,
@@ -187,6 +202,27 @@ export default function NodeFrame({
               className={`min-w-0 flex-1 truncate text-sm font-medium ${node.title ? "" : "text-lichen"}`}
             >
               {node.title || placeholder}
+            </span>
+          )}
+          {tags.length > 0 && (
+            <span
+              title={tagNames}
+              aria-hidden="true"
+              className="ml-2 flex shrink-0 items-center gap-1"
+            >
+              {tags.slice(0, MAX_TAG_DOTS).map((tag) => (
+                <span
+                  key={tag.id}
+                  data-tag-dot=""
+                  className="h-2 w-2 rounded-full"
+                  style={{ backgroundColor: connectionColor(tag.color).value }}
+                />
+              ))}
+              {tags.length > MAX_TAG_DOTS && (
+                <span className="text-xs text-lichen tabular-nums">
+                  +{tags.length - MAX_TAG_DOTS}
+                </span>
+              )}
             </span>
           )}
         </header>
