@@ -17,7 +17,10 @@ import {
   CONNECTION_SIDES,
   CONNECTION_SNAP_RADIUS,
   MAX_CONNECTIONS,
+  appendConnectedNode,
   connectSourcesToTarget,
+  facingSide,
+  positionForPort,
   findConnectionTarget,
   getConnectionKey,
   getConnectionPath,
@@ -268,6 +271,13 @@ type TestState = {
     target: ConnectionEndpoint | null;
     others?: ConnectionEndpoint[];
   } | null;
+  connectMenu?: {
+    left: number;
+    top: number;
+    point: Point;
+    source: ConnectionEndpoint;
+    others: ConnectionEndpoint[];
+  } | null;
   hoveredElement: TestElement | null;
   calls: string[];
   spaceHeld?: boolean;
@@ -321,6 +331,7 @@ const factory = new Function(
   // 단축키가 부르는 화면 밖 동작은 호출 기록만 남긴다.
   const NUDGE_STEP = 8;
   const NUDGE_STEP_LARGE = 40;
+  const CONNECT_MENU_MIN_DRAG = 8;
   const saveWorkspace = async () => { state.calls.push("save"); };
   const openSearch = () => { state.calls.push("search"); };
   const canvasKey = canvasPath.slice(0, activeDepth).join("/");
@@ -329,6 +340,7 @@ const factory = new Function(
     set current(value) { state.pendingFocus = value; },
   };
   const setSearchActive = value => { state.searchActive = value; };
+  const setConnectMenu = value => { state.connectMenu = value; };
   const searchInputRef = { current: { focus() { state.calls.push("focus-search"); } } };
   const navigateCanvas = () => { state.calls.push("navigate"); };
   const addNode = type => { state.calls.push("add:" + type); return null; };
@@ -629,6 +641,109 @@ test("다중 연결: 대상이 선택 안에 있으면 그 노드는 건너뛰�
   );
   assert.deepEqual(single.state.selected, ["a"]);
   assert.equal(single.state.draft?.others, undefined);
+});
+
+test("facingSide는 가로·세로 중 더 먼 쪽으로 새 노드가 시작점을 바라보는 변을 고른다", () => {
+  const from = { x: 100, y: 100 };
+  assert.equal(facingSide(from, { x: 300, y: 150 }), "left");
+  assert.equal(facingSide(from, { x: -100, y: 60 }), "right");
+  assert.equal(facingSide(from, { x: 120, y: 400 }), "top");
+  assert.equal(facingSide(from, { x: 80, y: -200 }), "bottom");
+  // 같은 거리면 가로를 따른다.
+  assert.equal(facingSide(from, { x: 200, y: 200 }), "left");
+});
+
+test("positionForPort는 그 변의 연결점이 놓은 자리에 오도록 왼쪽 위를 정한다", () => {
+  const anchor = { x: 500, y: 300 };
+  assert.deepEqual(positionForPort(anchor, "left", 320, 220), {
+    x: 500,
+    y: 190,
+  });
+  assert.deepEqual(positionForPort(anchor, "right", 320, 220), {
+    x: 180,
+    y: 190,
+  });
+  assert.deepEqual(positionForPort(anchor, "top", 320, 220), {
+    x: 340,
+    y: 300,
+  });
+  assert.deepEqual(positionForPort(anchor, "bottom", 320, 220), {
+    x: 340,
+    y: 80,
+  });
+});
+
+test("appendConnectedNode는 노드와 선을 한 번에 넣고 대상 변으로 잇는다", () => {
+  const document = fixture();
+  const node = {
+    ...document.nodes[1],
+    id: "new",
+    position: { x: 900, y: 100 },
+  };
+  const result = appendConnectedNode(
+    document,
+    node,
+    [
+      { nodeId: "a", side: "right" },
+      { nodeId: "c", side: "right" },
+    ],
+    "left",
+    () => "line",
+  );
+  assert.equal(result.document.nodes.at(-1), node);
+  assert.deepEqual(
+    result.document.connections.map((c) => [c.source.nodeId, c.target]),
+    [
+      ["a", { nodeId: "new", side: "left" }],
+      ["c", { nodeId: "new", side: "left" }],
+    ],
+  );
+  assert.equal(result.skippedForLimit, 0);
+  assert.equal(document.nodes.length, 3);
+});
+
+test("연결선을 빈 곳에 놓으면 노드 종류 메뉴가 열리고 문서는 그대로다", () => {
+  const h = setup();
+  const document = h.state.history.present;
+  h.call("startNodeConnection", pointer(), document.nodes[0], "right");
+  h.state.hoveredElement = new TestElement(false, true);
+  h.call(
+    "endGesture",
+    pointer({ type: "pointerup", buttons: 0, clientX: 400, clientY: 120 }),
+  );
+  assert.equal(h.state.history.present, document);
+  assert.equal(h.state.history.past.length, 0);
+  assert.deepEqual(h.state.connectMenu, {
+    left: 390,
+    top: 100,
+    point: { x: 760, y: 160 },
+    source: { nodeId: "a", side: "right" },
+    others: [],
+  });
+  // 메뉴가 떠 있는 동안 놓은 자리까지 미리보기를 남긴다.
+  assert.deepEqual(h.state.draft?.pointer, { x: 760, y: 160 });
+  assert.equal(h.state.draft?.target, null);
+});
+
+test("거의 끌지 않았거나 노드 위에 놓으면 메뉴를 열지 않는다", () => {
+  const h = setup();
+  const document = h.state.history.present;
+  h.call("startNodeConnection", pointer(), document.nodes[0], "right");
+  h.state.hoveredElement = new TestElement(false, true);
+  h.call(
+    "endGesture",
+    pointer({ type: "pointerup", buttons: 0, clientX: 23, clientY: 42 }),
+  );
+  assert.equal(h.state.connectMenu ?? null, null);
+
+  h.call("startNodeConnection", pointer(), document.nodes[0], "right");
+  h.state.hoveredElement = new TestElement(false, true, { nodeId: "c" });
+  h.call(
+    "endGesture",
+    pointer({ type: "pointerup", buttons: 0, clientX: 400, clientY: 120 }),
+  );
+  assert.equal(h.state.connectMenu ?? null, null);
+  assert.equal(h.state.draft, null);
 });
 
 test("Escape·포인터 취소·캡처 해제·창 전환은 연결을 만들지 않는다", () => {

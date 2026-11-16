@@ -150,6 +150,15 @@ export function ChevronDownIcon(props: IconProps) {
   );
 }
 
+export function CanvasIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3" y="5" width="18" height="14" rx="3" />
+      <path d="M10 15l5-5m-4 0h4v4" />
+    </Icon>
+  );
+}
+
 export function LinkIcon(props: IconProps) {
   return (
     <Icon {...props}>

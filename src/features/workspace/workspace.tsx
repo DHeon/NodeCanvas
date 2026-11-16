@@ -29,6 +29,7 @@ import {
   type SearchResult,
 } from "./search";
 import SearchPanel from "./search-panel";
+import ConnectNodeMenu from "./connect-node-menu";
 import ConflictPanel from "./conflict-panel";
 import ImageViewer from "./image-viewer";
 import LinkNodeView from "./link-node-view";
@@ -92,7 +93,10 @@ import {
   findConnectionTarget,
   getConnectionPoint,
   MAX_CONNECTIONS,
+  appendConnectedNode,
   connectSourcesToTarget,
+  facingSide,
+  positionForPort,
 } from "./connections";
 import {
   createWorkspaceHistory,
@@ -221,6 +225,19 @@ function writeCanvasPath(path: readonly string[], mode: "push" | "replace") {
 
 const NUDGE_STEP = 8;
 const NUDGE_STEP_LARGE = 40;
+// 연결점을 눌렀다 떼기만 한 것과 빈 곳으로 끌어 놓은 것을 가르는 화면 거리.
+const CONNECT_MENU_MIN_DRAG = 8;
+
+/** 연결선을 빈 곳에 놓았을 때 뜨는 노드 종류 메뉴. */
+type ConnectMenuState = {
+  /** 뷰포트 기준 위치. */
+  left: number;
+  top: number;
+  /** 놓은 자리(캔버스 좌표). 새 노드의 연결점이 여기에 온다. */
+  point: Point;
+  source: ConnectionEndpoint;
+  others: ConnectionEndpoint[];
+};
 const ZOOM_MIN = 0.1;
 const ZOOM_MAX = 2;
 const timeFormat = new Intl.DateTimeFormat("ko", {
@@ -396,12 +413,14 @@ export default function Workspace({
   const [selectionRect, setSelectionRect] = useState<SelectionRect | null>(
     null,
   );
+  const [connectMenu, setConnectMenu] = useState<ConnectMenuState | null>(null);
   // 다른 공간으로 옮기면(뒤로 가기 포함) 이전 공간의 선택은 의미가 없으므로 비운다.
   const [selectionCanvasKey, setSelectionCanvasKey] = useState(canvasKey);
   if (selectionCanvasKey !== canvasKey) {
     setSelectionCanvasKey(canvasKey);
     setSelectedNodeIds([]);
     setSelectedConnectionId(null);
+    setConnectMenu(null);
   }
   const [isPanning, setIsPanning] = useState(false); //드래그 상태따라 커서 변경
   const [spaceHeld, setSpaceHeld] = useState(false);
@@ -1609,12 +1628,33 @@ export default function Workspace({
     if (!gesture || gesture.pointerId !== event.pointerId) return;
 
     // 취소나 포인터 캡처 해제에서는 연결을 만들지 않는다.
+    let menu: ConnectMenuState | null = null;
     if (gesture.kind === "connect" && event.type === "pointerup") {
-      const { target } = getConnectionHover(
+      const { target, hoveredNodeId } = getConnectionHover(
         event.clientX,
         event.clientY,
         gesture.source,
       );
+      // 빈 곳에 놓으면 그 자리에 노드 종류 메뉴를 띄운다.
+      const point = getCanvasPoint(event.clientX, event.clientY);
+      const rect = viewportRef.current?.getBoundingClientRect();
+      if (
+        !target &&
+        !hoveredNodeId &&
+        point &&
+        rect &&
+        Math.hypot(
+          event.clientX - gesture.startPointer.x,
+          event.clientY - gesture.startPointer.y,
+        ) >= CONNECT_MENU_MIN_DRAG
+      )
+        menu = {
+          left: event.clientX - rect.left,
+          top: event.clientY - rect.top,
+          point,
+          source: gesture.source,
+          others: gesture.others,
+        };
       if (target) {
         const sources = [gesture.source, ...gesture.others];
         const nodeIdsOf = (document: WorkspaceDocument) =>
@@ -1651,8 +1691,56 @@ export default function Workspace({
     }
 
     clearGesture();
+    if (menu) {
+      setConnectMenu(menu);
+      // 메뉴가 떠 있는 동안 놓은 자리까지 미리보기 선을 남긴다.
+      setConnectionDraft({
+        source: menu.source,
+        pointer: menu.point,
+        hoveredNodeId: null,
+        target: null,
+        ...(menu.others.length ? { others: menu.others } : {}),
+      });
+    }
   }
-  function addNode(type: WorkspaceNode["type"]) {
+
+  function closeConnectMenu() {
+    setConnectMenu(null);
+    setConnectionDraft(null);
+  }
+
+  /** 메뉴에서 고른 종류로 놓은 자리에 노드를 만들고 끌던 선(들)을 잇는다. */
+  function createConnectedNode(type: WorkspaceNode["type"]) {
+    const menu = connectMenu;
+    if (!menu) return;
+    const sourceNode = workspace.nodes.find(
+      (node) => node.id === menu.source.nodeId,
+    );
+    if (!sourceNode) {
+      closeConnectMenu();
+      return;
+    }
+    const side = facingSide(
+      getConnectionPoint(sourceNode, menu.source.side),
+      menu.point,
+    );
+    // 깊이·개수 제한으로 못 만들면 알림만 띄우고 메뉴를 닫는다.
+    addNode(type, {
+      anchor: menu.point,
+      side,
+      sources: [menu.source, ...menu.others],
+    });
+    closeConnectMenu();
+  }
+  function addNode(
+    type: WorkspaceNode["type"],
+    /** 연결선을 빈 곳에 놓아 만들 때: 그 변의 연결점을 anchor에 두고 sources를 잇는다. */
+    at?: {
+      anchor: Point;
+      side: ConnectionSide;
+      sources: ConnectionEndpoint[];
+    },
+  ) {
     const viewport = viewportRef.current;
     if (!viewport || gestureRef.current) return null;
     if (type === "canvas_node" && activeDepth >= MAX_CANVAS_DEPTH) {
@@ -1686,24 +1774,20 @@ export default function Workspace({
     const centerX = (rect.width / 2 - camera.x) / camera.zoom;
     const centerY = (rect.height / 2 - camera.y) / camera.zoom;
     const offset = (workspace.nodes.length % 6) * 24;
+    // 놓은 자리 기준 배치는 정수로 맞춰 속성 패널에 소수가 보이지 않게 한다(1px 미만 차이).
+    const port = at && positionForPort(at.anchor, at.side, width, height);
+    const wanted = port
+      ? { x: Math.round(port.x), y: Math.round(port.y) }
+      : {
+          x: centerX - width / 2 + offset,
+          y: centerY - height / 2 + offset,
+        };
     const x = workspace.canvas.infinite
-      ? centerX - width / 2 + offset
-      : Math.max(
-          0,
-          Math.min(
-            centerX - width / 2 + offset,
-            workspace.canvas.width - width,
-          ),
-        );
+      ? wanted.x
+      : Math.max(0, Math.min(wanted.x, workspace.canvas.width - width));
     const y = workspace.canvas.infinite
-      ? centerY - height / 2 + offset
-      : Math.max(
-          0,
-          Math.min(
-            centerY - height / 2 + offset,
-            workspace.canvas.height - height,
-          ),
-        );
+      ? wanted.y
+      : Math.max(0, Math.min(wanted.y, workspace.canvas.height - height));
     const base = { id: uuidv4(), position: { x, y }, width, height, title: "" };
     const node: WorkspaceNode =
       type === "link_node"
@@ -1722,18 +1806,44 @@ export default function Workspace({
                 ),
               }
             : { ...base, type, text: "" };
-    setWorkspace((current) => ({
-      ...current,
-      nodes: [...current.nodes, node],
-    }));
+    if (at) {
+      // 노드와 선을 한 번의 변경으로 넣는다. 갱신 함수 안에서도 같은 선 ID를 쓰도록 미리 만든다.
+      const lineIds = at.sources.map(() => uuidv4());
+      const idQueue = () => {
+        let next = 0;
+        return () => lineIds[next++] ?? uuidv4();
+      };
+      const preview = appendConnectedNode(
+        workspace,
+        node,
+        at.sources,
+        at.side,
+        idQueue(),
+      );
+      setWorkspace(
+        (current) =>
+          appendConnectedNode(current, node, at.sources, at.side, idQueue())
+            .document,
+      );
+      setNotice(
+        preview.skippedForLimit > 0
+          ? `연결선은 캔버스마다 ${MAX_CONNECTIONS}개까지라 ${preview.skippedForLimit}개는 잇지 못했어요.`
+          : "",
+      );
+    } else {
+      setWorkspace((current) => ({
+        ...current,
+        nodes: [...current.nodes, node],
+      }));
+      setNotice("");
+      setCamera((current) => ({
+        ...current,
+        x: rect.width / 2 - (x + width / 2) * current.zoom,
+        y: rect.height / 2 - (y + height / 2) * current.zoom,
+      }));
+    }
     setSelectedNodeIds([node.id]);
     setSelectedConnectionId(null);
-    setNotice("");
-    setCamera((current) => ({
-      ...current,
-      x: rect.width / 2 - (x + width / 2) * current.zoom,
-      y: rect.height / 2 - (y + height / 2) * current.zoom,
-    }));
     // 새 텍스트 노드는 바로 받아 적을 수 있게 본문에 커서를 둔다.
     if (type === "text_node") focusAfterRenderRef.current = node.id;
     return node.id;
@@ -2516,7 +2626,18 @@ export default function Workspace({
         }}
       />
       {/* 뷰포트  */}
-      <div className="relative flex min-h-0 flex-1">
+      <div
+        className="relative flex min-h-0 flex-1"
+        onContextMenu={(event) => {
+          // 작업 영역에서는 브라우저 우클릭 메뉴를 막는다. 글을 쓰는 칸은 붙여넣기·맞춤법 때문에 둔다.
+          if (
+            event.target instanceof Element &&
+            event.target.closest("input, textarea, [contenteditable='true']")
+          )
+            return;
+          event.preventDefault();
+        }}
+      >
         <WorkspaceToolbar
           onAddTextNode={addTextNode}
           onAddImageNode={() => addNode("image_node")}
@@ -2685,6 +2806,15 @@ export default function Workspace({
               />
             )}
           </div>
+          {connectMenu && (
+            <ConnectNodeMenu
+              left={connectMenu.left}
+              top={connectMenu.top}
+              canvasDisabled={activeDepth >= MAX_CANVAS_DEPTH}
+              onPick={createConnectedNode}
+              onClose={closeConnectMenu}
+            />
+          )}
           {searchOpen && (
             <SearchPanel
               inputRef={searchInputRef}

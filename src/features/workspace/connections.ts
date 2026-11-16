@@ -3,6 +3,7 @@ import type {
   ConnectionSide,
   NodeConnection,
   Point,
+  WorkspaceDocument,
   WorkspaceNode,
 } from "./types";
 
@@ -248,4 +249,57 @@ export function connectSourcesToTarget(
     added.push({ id: makeId(), source, target });
   }
   return { added, skippedForLimit };
+}
+
+/**
+ * 새 노드가 시작점(from)을 바라보는 변. 놓은 자리(to)가 가로·세로 중 더 멀리 떨어진 쪽으로 정한다.
+ * 오른쪽에 놓으면 새 노드의 왼쪽, 아래에 놓으면 위쪽 연결점에 잇는다. 같은 거리면 가로를 따른다.
+ */
+export function facingSide(from: Point, to: Point): ConnectionSide {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? "left" : "right";
+  return dy >= 0 ? "top" : "bottom";
+}
+
+/** 노드의 그 변 연결점이 anchor에 오도록 하는 왼쪽 위 좌표. */
+export function positionForPort(
+  anchor: Point,
+  side: ConnectionSide,
+  width: number,
+  height: number,
+): Point {
+  if (side === "left") return { x: anchor.x, y: anchor.y - height / 2 };
+  if (side === "right")
+    return { x: anchor.x - width, y: anchor.y - height / 2 };
+  if (side === "top") return { x: anchor.x - width / 2, y: anchor.y };
+  return { x: anchor.x - width / 2, y: anchor.y - height };
+}
+
+/** 새 노드를 넣고 출발점들을 그 노드의 한 변에 잇는다. 한 번의 문서 변경(실행 취소 한 단계)으로 쓴다. */
+export function appendConnectedNode(
+  document: WorkspaceDocument,
+  node: WorkspaceNode,
+  sources: readonly ConnectionEndpoint[],
+  side: ConnectionSide,
+  makeId: () => string,
+): { document: WorkspaceDocument; skippedForLimit: number } {
+  const nodes = [...document.nodes, node];
+  const { added, skippedForLimit } = connectSourcesToTarget(
+    document.connections,
+    new Set(nodes.map((candidate) => candidate.id)),
+    sources,
+    { nodeId: node.id, side },
+    makeId,
+  );
+  return {
+    document: {
+      ...document,
+      nodes,
+      connections: added.length
+        ? [...document.connections, ...added]
+        : document.connections,
+    },
+    skippedForLimit,
+  };
 }
