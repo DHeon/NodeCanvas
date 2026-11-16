@@ -2,11 +2,13 @@ import { useRef, useState } from "react";
 import type {
   NodeConnection,
   NodeTransformPatch,
+  TagDefinition,
   TextNodeContentPatch,
   WorkspaceNode,
 } from "./types";
 import { ChevronLeftIcon, ChevronRightIcon } from "./icons";
 import { nodeDisplayName } from "./workspace-tree";
+import TagInput from "./tag-input";
 import TextStyleSection from "./text-style-section";
 import { normalizeLinkUrl, parseYouTube } from "./link-embed";
 
@@ -231,7 +233,29 @@ type PropertiesProps = {
   selectedConnection: NodeConnection | undefined;
   onConnectionColor: (connectionId: string, color: ConnectionColor) => void;
   onReturnToCanvas: () => void;
+  /** 프로젝트 태그 목록과 지금 선택한 노드들(여러 개일 수 있음). */
+  tags: TagDefinition[];
+  selectedNodes: WorkspaceNode[];
+  onTagAdd: (nodeIds: string[], name: string) => void;
+  onTagRemove: (nodeIds: string[], tagId: string) => void;
+  onTagRecolor: (tagId: string, color: ConnectionColor) => void;
 };
+
+/** 선택 노드들의 태그 합집합. 일부에만 있으면 partial. */
+function appliedTags(nodes: WorkspaceNode[], tags: TagDefinition[]) {
+  const byId = new Map(tags.map((tag) => [tag.id, tag]));
+  const order: string[] = [];
+  const counts = new Map<string, number>();
+  for (const node of nodes)
+    for (const id of node.tags ?? []) {
+      if (!counts.has(id)) order.push(id);
+      counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+  return order.flatMap((id) => {
+    const tag = byId.get(id);
+    return tag ? [{ tag, partial: counts.get(id)! < nodes.length }] : [];
+  });
+}
 
 export default function WorkspaceProperties({
   infinite,
@@ -255,7 +279,26 @@ export default function WorkspaceProperties({
   selectedConnection,
   onConnectionColor,
   onReturnToCanvas,
+  tags,
+  selectedNodes,
+  onTagAdd,
+  onTagRemove,
+  onTagRecolor,
 }: PropertiesProps) {
+  const selectedIds = selectedNodes.map((item) => item.id);
+  const tagEditor = selectedNodes.length > 0 && (
+    <TagInput
+      allTags={tags}
+      applied={appliedTags(selectedNodes, tags)}
+      onAdd={(name) => onTagAdd(selectedIds, name)}
+      onFill={(tagId) => {
+        const tag = tags.find((item) => item.id === tagId);
+        if (tag) onTagAdd(selectedIds, tag.name);
+      }}
+      onRemove={(tagId) => onTagRemove(selectedIds, tagId)}
+      onRecolor={onTagRecolor}
+    />
+  );
   const connectionEnds = selectedConnection
     ? [selectedConnection.source, selectedConnection.target].map((end) =>
         canvasNodes.find((item) => item.id === end.nodeId),
@@ -318,11 +361,23 @@ export default function WorkspaceProperties({
                 </section>
               </>
             ) : !node ? (
-              <p className="text-sm leading-6 break-keep text-lichen">
-                {selectionCount > 1
-                  ? `노드 ${selectionCount}개를 선택했어요. 방향키로 함께 옮기거나 Ctrl+D로 복제할 수 있어요. 제목·크기를 바꾸려면 하나만 선택하세요.`
-                  : "노드를 선택하면 제목·위치·연결을 여기서 바꿀 수 있어요."}
-              </p>
+              <>
+                <p className="text-sm leading-6 break-keep text-lichen">
+                  {selectionCount > 1
+                    ? `노드 ${selectionCount}개를 선택했어요. 방향키로 함께 옮기거나 Ctrl+D로 복제할 수 있어요. 제목·크기를 바꾸려면 하나만 선택하세요.`
+                    : "노드를 선택하면 제목·위치·태그를 여기서 바꿀 수 있어요."}
+                </p>
+                {selectionCount > 1 && tagEditor && (
+                  <section className={sectionClass}>
+                    <h3 className={headingClass}>공통 태그</h3>
+                    {tagEditor}
+                    <p className={hintClass}>
+                      흐린 태그는 일부 노드에만 붙어 있어요. 누르면 나머지에도
+                      붙어요.
+                    </p>
+                  </section>
+                )}
+              </>
             ) : (
               <>
                 <section className="space-y-3">
@@ -353,6 +408,10 @@ export default function WorkspaceProperties({
                       }}
                     />
                   </label>
+                </section>
+                <section className={sectionClass}>
+                  <h3 className={headingClass}>태그</h3>
+                  {tagEditor}
                 </section>
                 <section className={sectionClass}>
                   <h3 className={headingClass}>위치 · 크기</h3>

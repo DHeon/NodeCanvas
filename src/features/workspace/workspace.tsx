@@ -28,6 +28,13 @@ import LinkNodeView from "./link-node-view";
 import useLinkPreviews from "./use-link-previews";
 import { normalizeLinkUrl } from "./link-embed";
 import { mergeTextStyle, type TextStyle } from "./text-style";
+import {
+  attachTag,
+  createOrFindTag,
+  detachTag,
+  MAX_NODE_TAGS,
+  recolorTag,
+} from "./tags";
 import ShortcutHelp from "./shortcut-help";
 import { useAutosave } from "./use-autosave";
 import { countNodes, duplicateNodes } from "./node-clone";
@@ -1804,6 +1811,52 @@ export default function Workspace({
     });
   }
 
+  /** 이름으로 태그를 찾거나 만들어 지금 공간의 노드들에 붙인다(Undo 한 단계). */
+  function addTagToNodes(nodeIds: string[], name: string) {
+    if (gestureRef.current || !nodeIds.length) return;
+    const created = createOrFindTag(rootDocument, name);
+    if ("error" in created) {
+      setNotice(created.error);
+      return;
+    }
+    const path = canvasPath.slice(0, activeDepth);
+    const preview = attachTag(created.document, path, nodeIds, created.tag.id);
+    if (preview.skipped > 0)
+      setNotice(
+        `노드 ${preview.skipped}개는 태그가 가득 차(${MAX_NODE_TAGS}개) 붙이지 못했어요.`,
+      );
+    // 붙일 자리가 하나도 없으면 새 태그도 만들지 않는다.
+    if (preview.document === created.document) return;
+    dispatchHistory({ type: "commit" });
+    dispatchHistory({
+      type: "change",
+      update: (root) => {
+        const found = createOrFindTag(root, name);
+        if ("error" in found) return root;
+        return attachTag(found.document, path, nodeIds, found.tag.id).document;
+      },
+    });
+  }
+
+  function removeTagFromNodes(nodeIds: string[], tagId: string) {
+    if (gestureRef.current) return;
+    const path = canvasPath.slice(0, activeDepth);
+    dispatchHistory({ type: "commit" });
+    dispatchHistory({
+      type: "change",
+      update: (root) => detachTag(root, path, nodeIds, tagId),
+    });
+  }
+
+  function recolorTagById(tagId: string, color: ConnectionColor) {
+    if (gestureRef.current) return;
+    dispatchHistory({ type: "commit" });
+    dispatchHistory({
+      type: "change",
+      update: (root) => recolorTag(root, tagId, color),
+    });
+  }
+
   function removeNodeImage(nodeId: string) {
     if (gestureRef.current) return;
     dispatchHistory({ type: "commit" });
@@ -1983,6 +2036,9 @@ export default function Workspace({
     24 * 2 ** Math.max(0, Math.ceil(Math.log2(0.5 / camera.zoom)));
   const dotRadius = Math.max(0.8, camera.zoom);
   const showGrid = workspace.canvas.grid !== false;
+  const tagsById = new Map(
+    (rootDocument.tags ?? []).map((tag) => [tag.id, tag]),
+  );
   const viewerNode = workspace.nodes.find(
     (node): node is ImageNode & { image: ImageReference } =>
       node.id === viewerNodeId && node.type === "image_node" && !!node.image,
@@ -2369,6 +2425,10 @@ export default function Workspace({
                 onChange: updateTextNode,
                 onEditStart: beginTextEdit,
                 onEditEnd: endTextEdit,
+                tags: (node.tags ?? []).flatMap((id) => {
+                  const tag = tagsById.get(id);
+                  return tag ? [tag] : [];
+                }),
               };
               return node.type === "text_node" ? (
                 <TextNodeView key={node.id} {...frame} node={node} />
@@ -2479,6 +2539,13 @@ export default function Workspace({
           canvasNodes={workspace.nodes}
           selectedConnection={selectedConnection}
           onConnectionColor={setConnectionColor}
+          tags={rootDocument.tags ?? []}
+          selectedNodes={workspace.nodes.filter((item) =>
+            selectedNodeIds.includes(item.id),
+          )}
+          onTagAdd={addTagToNodes}
+          onTagRemove={removeTagFromNodes}
+          onTagRecolor={recolorTagById}
           onReturnToCanvas={() =>
             viewportRef.current?.focus({ preventScroll: true })
           }
