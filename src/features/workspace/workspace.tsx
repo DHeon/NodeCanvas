@@ -2415,20 +2415,21 @@ export default function Workspace({
               />
             )}
           </div>
-          {/* 확대 비율과 무관하게 읽히도록 캔버스 변환 바깥에 둔다. */}
-          {workspace.nodes.length === 0 && (
-            <div className="pointer-events-none absolute inset-0 grid place-content-center px-6 text-center">
-              <div className="rounded-xl bg-paper/90 px-6 py-5 shadow-card backdrop-blur-sm">
-                <p className="text-sm font-medium text-bark">
-                  {currentCanvas ? "빈 하위 작업 공간" : "빈 작업 공간"}
-                </p>
-                <p className="mt-1 text-sm break-keep text-lichen">
-                  왼쪽 도구 막대나{" "}
-                  <kbd className="font-mono text-bark-soft">T</kbd> 키로 첫
-                  메모를 추가하세요.
-                </p>
-              </div>
-            </div>
+          {tool !== "select" && (
+            // 그리기 중에는 노드 위를 덮어 노드 선택·드래그 대신 그림 입력만 받는다.
+            <div aria-hidden="true" className="absolute inset-0 z-30" />
+          )}
+          {tool === "eraser" && eraserPointer && (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none fixed z-40 rounded-full border border-bark-soft/60 bg-white/30"
+              style={{
+                left: eraserPointer.x - ERASER_RADIUS,
+                top: eraserPointer.y - ERASER_RADIUS,
+                width: ERASER_RADIUS * 2,
+                height: ERASER_RADIUS * 2,
+              }}
+            />
           )}
           {notice && (
             <div className="pointer-events-none absolute inset-x-0 bottom-6 flex justify-center px-4">
