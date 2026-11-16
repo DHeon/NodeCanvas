@@ -16,6 +16,8 @@ type ConnectionLayerProps = {
   selectedConnectionId: string | null;
   zoom: number;
   onSelect: (connectionId: string) => void;
+  /** 검색에서 흐려진 노드. 양 끝이 모두 흐려진 선도 흐린다. */
+  dimmedNodeIds?: ReadonlySet<string>;
 };
 
 export default function ConnectionLayer({
@@ -26,6 +28,7 @@ export default function ConnectionLayer({
   selectedConnectionId,
   zoom,
   onSelect,
+  dimmedNodeIds,
 }: ConnectionLayerProps) {
   const nodesById = new Map(nodes.map((node) => [node.id, node]));
   const draftSource = draft ? nodesById.get(draft.source.nodeId) : undefined;
@@ -43,6 +46,8 @@ export default function ConnectionLayer({
         const target = nodesById.get(connection.target.nodeId);
         if (!source || !target) return null;
         const selected = connection.id === selectedConnectionId;
+        const dimmed =
+          !!dimmedNodeIds?.has(source.id) && !!dimmedNodeIds.has(target.id);
         const color = connectionColor(connection.color);
         const path = getStyledConnectionPath(
           canvas.lineStyle,
@@ -52,7 +57,11 @@ export default function ConnectionLayer({
           connection.target.side,
         );
         return (
-          <g key={connection.id} className="group/connection">
+          <g
+            key={connection.id}
+            className="group/connection transition-opacity"
+            opacity={dimmed ? 0.25 : undefined}
+          >
             {/* 실제 선보다 넓은 투명 영역으로 선택한다. 빈 SVG 영역은 클릭을 막지 않는다. */}
             <path
               data-connection-hit={connection.id}

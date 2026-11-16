@@ -316,6 +316,7 @@ const factory = new Function(
   const NUDGE_STEP = 8;
   const NUDGE_STEP_LARGE = 40;
   const saveWorkspace = async () => { state.calls.push("save"); };
+  const openSearch = () => { state.calls.push("search"); };
   const navigateCanvas = () => { state.calls.push("navigate"); };
   const addNode = type => { state.calls.push("add:" + type); return null; };
   const chooseImage = () => {};
@@ -1034,6 +1035,22 @@ test("다른 포인터 이벤트는 무시하고 버튼이 풀리면 드래그�
   assert.equal(h.state.history.present, document);
   h.call("moveGesture", pointer({ buttons: 0 }));
   assert.equal(h.gestureRef.current, null);
+  assert.equal(h.state.history.past.length, 0);
+});
+
+test("단축키: Ctrl/Cmd+F는 입력칸 안에서도 브라우저 찾기 대신 노드 검색을 연다", () => {
+  const h = setup();
+  const inputKey = key("f", { ctrlKey: true, target: new TestElement(true) });
+  h.call("handleWorkspaceKeyDown", inputKey);
+  assert.equal(inputKey.defaultPrevented, true);
+  const metaKey = key("F", { metaKey: true });
+  h.call("handleWorkspaceKeyDown", metaKey);
+  assert.equal(metaKey.defaultPrevented, true);
+  assert.deepEqual(h.state.calls, ["search", "search"]);
+
+  // 그냥 f는 검색을 열지 않는다.
+  h.call("handleWorkspaceKeyDown", key("f"));
+  assert.deepEqual(h.state.calls, ["search", "search"]);
   assert.equal(h.state.history.past.length, 0);
 });
 

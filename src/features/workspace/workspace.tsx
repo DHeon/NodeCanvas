@@ -21,7 +21,13 @@ import type {
 import TextNodeView from "./text-node-view";
 import ImageNodeView from "./image-node-view";
 import CanvasNodeView from "./canvas-node-view";
-import { ArrowLeftIcon, MinusIcon, PlusIcon } from "./icons";
+import { ArrowLeftIcon, MinusIcon, PlusIcon, SearchIcon } from "./icons";
+import {
+  countNestedMatches,
+  searchWorkspace,
+  type SearchResult,
+} from "./search";
+import SearchPanel from "./search-panel";
 import ConflictPanel from "./conflict-panel";
 import ImageViewer from "./image-viewer";
 import LinkNodeView from "./link-node-view";
@@ -398,6 +404,19 @@ export default function Workspace({
   const [isPanning, setIsPanning] = useState(false); //드래그 상태따라 커서 변경
   const [spaceHeld, setSpaceHeld] = useState(false);
   const spaceHeldRef = useRef(false);
+
+  // 노드 검색. 검색은 문서를 바꾸지 않으므로 실행 취소 이력에 남지 않는다.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [searchActive, setSearchActive] = useState<number | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  // 다른 캔버스의 결과로 갈 때, 공간 전환 뒤 카메라 복원이 끝난 다음 그 노드를 가운데 둔다.
+  const pendingFocusRef = useRef<{ key: string; nodeId: string } | null>(null);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedQuery(searchQuery), 150);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery]);
   const hasPendingEdit =
     history.transactionStart !== null &&
     history.transactionStart !== rootDocument;
@@ -561,6 +580,25 @@ export default function Workspace({
     if (savedCamera) setCamera(savedCamera);
     else fitCanvas();
 
+    const pending = pendingFocusRef.current;
+    if (pending && pending.key === canvasKey) {
+      pendingFocusRef.current = null;
+      const node = workspaceRef.current.nodes.find(
+        (candidate) => candidate.id === pending.nodeId,
+      );
+      if (node) {
+        const rect = viewport.getBoundingClientRect();
+        setCamera((current) => ({
+          ...current,
+          x: rect.width / 2 - (node.position.x + node.width / 2) * current.zoom,
+          y:
+            rect.height / 2 -
+            (node.position.y + node.height / 2) * current.zoom,
+        }));
+        setSelectedNodeIds([node.id]);
+      }
+    }
+
     let lastSize = viewport.getBoundingClientRect();
     const observer = new ResizeObserver(() => {
       const size = viewport.getBoundingClientRect();
@@ -595,7 +633,9 @@ export default function Workspace({
       // 입력 영역에서는 텍스트 스크롤을 사용
       if (
         event.target instanceof Element &&
-        event.target.closest("textarea, input, [contenteditable='true']")
+        event.target.closest(
+          "textarea, input, [contenteditable='true'], [data-search-panel]",
+        )
       ) {
         return;
       }
@@ -958,6 +998,18 @@ export default function Workspace({
     ) {
       event.preventDefault();
       void saveWorkspace();
+      return;
+    }
+    // 노드 검색도 입력칸 안에서 열린다(브라우저 "찾기" 대신).
+    if (
+      (event.ctrlKey || event.metaKey) &&
+      !event.altKey &&
+      !event.shiftKey &&
+      event.key.toLowerCase() === "f" &&
+      !event.nativeEvent.isComposing
+    ) {
+      event.preventDefault();
+      openSearch();
       return;
     }
     if (
@@ -1665,6 +1717,51 @@ export default function Workspace({
     addNode("text_node");
   }
 
+  function openSearch() {
+    setSearchOpen(true);
+    // 이미 열려 있으면 입력칸으로 돌아가 검색어를 고른다. 처음 열 때는 autoFocus가 맡는다.
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  }
+
+  function closeSearch() {
+    setSearchOpen(false);
+    setSearchQuery("");
+    setDebouncedQuery("");
+    setSearchActive(null);
+    viewportRef.current?.focus({ preventScroll: true });
+  }
+
+  function pickSearchResult(result: SearchResult) {
+    if (gestureRef.current) return;
+    const target = resolveWorkspacePath(rootDocument, result.path);
+    const node =
+      target.trail.length === result.path.length
+        ? target.document.nodes.find(
+            (candidate) => candidate.id === result.node.id,
+          )
+        : undefined;
+    if (!node) return;
+    if (tool !== "select") changeTool("select");
+    const key = result.path.join("/");
+    if (key !== canvasKey) {
+      pendingFocusRef.current = { key, nodeId: node.id };
+      navigateCanvas(result.path);
+      return;
+    }
+    const viewport = viewportRef.current;
+    if (viewport) {
+      const rect = viewport.getBoundingClientRect();
+      setCamera((current) => ({
+        ...current,
+        x: rect.width / 2 - (node.position.x + node.width / 2) * current.zoom,
+        y: rect.height / 2 - (node.position.y + node.height / 2) * current.zoom,
+      }));
+    }
+    setSelectedNodeIds([node.id]);
+    setSelectedConnectionId(null);
+  }
+
   function navigateCanvas(path: string[]) {
     if (gestureRef.current) return;
     viewportRef.current?.focus({ preventScroll: true });
@@ -2068,6 +2165,36 @@ export default function Workspace({
   const tagsById = new Map(
     (rootDocument.tags ?? []).map((tag) => [tag.id, tag]),
   );
+  const search = useMemo(
+    () =>
+      searchOpen && debouncedQuery.trim()
+        ? searchWorkspace(
+            rootDocument,
+            debouncedQuery,
+            canvasKey ? canvasKey.split("/") : [],
+          )
+        : null,
+    [searchOpen, debouncedQuery, rootDocument, canvasKey],
+  );
+  const searchResults = search?.results ?? [];
+  // 지금 캔버스에서 결과를 대표하는 노드. 검색 중이 아니면 null(흐림 없음).
+  const searchAnchors = search
+    ? new Set(searchResults.flatMap((result) => result.anchorId ?? []))
+    : null;
+  const nestedSearchCounts = search
+    ? countNestedMatches(searchResults, canvasKey ? canvasKey.split("/") : [])
+    : null;
+  const highlightedNodeId =
+    searchActive === null
+      ? null
+      : (searchResults[searchActive]?.anchorId ?? null);
+  const dimmedNodeIds = searchAnchors
+    ? new Set(
+        workspace.nodes
+          .filter((node) => !searchAnchors.has(node.id))
+          .map((node) => node.id),
+      )
+    : undefined;
   const viewerNode = workspace.nodes.find(
     (node): node is ImageNode & { image: ImageReference } =>
       node.id === viewerNodeId && node.type === "image_node" && !!node.image,
@@ -2260,6 +2387,17 @@ export default function Workspace({
           >
             저장
           </button>
+          <button
+            type="button"
+            onClick={openSearch}
+            aria-label="검색 (Ctrl+F)"
+            title="노드 검색 (Ctrl+F)"
+            aria-keyshortcuts="Control+F Meta+F"
+            aria-pressed={searchOpen}
+            className={iconButtonClassName}
+          >
+            <SearchIcon />
+          </button>
           <ShortcutHelp buttonClassName={iconButtonClassName} />
         </div>
         {saveError && !hasConflict && (
@@ -2437,6 +2575,7 @@ export default function Workspace({
               selectedConnectionId={selectedConnectionId}
               zoom={camera.zoom}
               onSelect={selectConnection}
+              dimmedNodeIds={dimmedNodeIds}
             />
 
             {workspace.nodes.map((node) => {
@@ -2463,6 +2602,12 @@ export default function Workspace({
                   const tag = tagsById.get(id);
                   return tag ? [tag] : [];
                 }),
+                searchState: searchAnchors
+                  ? searchAnchors.has(node.id)
+                    ? ("match" as const)
+                    : ("dimmed" as const)
+                  : ("none" as const),
+                highlighted: highlightedNodeId === node.id,
               };
               return node.type === "text_node" ? (
                 <TextNodeView key={node.id} {...frame} node={node} />
@@ -2481,6 +2626,7 @@ export default function Workspace({
                   {...frame}
                   node={node}
                   onOpen={openCanvas}
+                  searchCount={nestedSearchCounts?.get(node.id) ?? 0}
                 />
               ) : (
                 <ImageNodeView
@@ -2509,6 +2655,25 @@ export default function Workspace({
               />
             )}
           </div>
+          {searchOpen && (
+            <SearchPanel
+              inputRef={searchInputRef}
+              query={searchQuery}
+              onQueryChange={(query) => {
+                setSearchQuery(query);
+                setSearchActive(null);
+              }}
+              results={searchResults}
+              total={search?.total ?? 0}
+              truncated={search?.truncated ?? false}
+              settled={debouncedQuery === searchQuery}
+              tags={rootDocument.tags ?? []}
+              activeIndex={searchActive}
+              onActiveChange={setSearchActive}
+              onPick={pickSearchResult}
+              onClose={closeSearch}
+            />
+          )}
           {tool !== "select" && (
             // 그리기 중에는 노드 위를 덮어 노드 선택·드래그 대신 그림 입력만 받는다.
             <div aria-hidden="true" className="absolute inset-0 z-30" />
