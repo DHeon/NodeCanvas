@@ -116,6 +116,7 @@ import {
 
 import type {
   Camera,
+  TagDefinition,
   ConnectionEndpoint,
   ConnectionDraft,
   ConnectionSide,
@@ -1866,6 +1867,17 @@ export default function Workspace({
     searchInputRef.current?.select();
   }
 
+  /** 태그 미리보기에서 고른 태그로 검색을 바로 연다. 그 태그 노드만 또렷하게 남는다. */
+  function openTagLens(tag: TagDefinition) {
+    // 끝 공백: 검색칸이 태그 후보 칩을 다시 띄우지 않게 한다. 디바운스 없이 바로 반영한다.
+    const query = `#${tag.name} `;
+    setSearchOpen(true);
+    setSearchQuery(query);
+    setDebouncedQuery(query);
+    setSearchActive(null);
+    searchInputRef.current?.focus();
+  }
+
   function closeSearch() {
     setSearchOpen(false);
     setSearchQuery("");
@@ -2765,6 +2777,7 @@ export default function Workspace({
                     : ("dimmed" as const)
                   : ("none" as const),
                 highlighted: highlightedNodeId === node.id,
+                onTagLens: openTagLens,
               };
               return node.type === "text_node" ? (
                 <TextNodeView key={node.id} {...frame} node={node} />

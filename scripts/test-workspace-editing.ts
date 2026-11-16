@@ -211,6 +211,7 @@ const names = [
   "startDrawing",
   "eraseAlong",
   "pickSearchResult",
+  "openTagLens",
 ];
 const functions = new Map<string, string>();
 let clearGesture = "";
@@ -284,6 +285,9 @@ type TestState = {
   tool?: "select" | "pen" | "eraser";
   canvasPath?: string[];
   searchActive?: number | null;
+  searchOpen?: boolean;
+  searchQuery?: string;
+  debouncedQuery?: string;
   pendingFocus?: { key: string; nodeId: string } | null;
 };
 type Handlers = Record<string, (...args: unknown[]) => void>;
@@ -341,6 +345,9 @@ const factory = new Function(
   };
   const setSearchActive = value => { state.searchActive = value; };
   const setConnectMenu = value => { state.connectMenu = value; };
+  const setSearchOpen = value => { state.searchOpen = value; };
+  const setSearchQuery = value => { state.searchQuery = value; };
+  const setDebouncedQuery = value => { state.debouncedQuery = value; };
   const searchInputRef = { current: { focus() { state.calls.push("focus-search"); } } };
   const navigateCanvas = () => { state.calls.push("navigate"); };
   const addNode = type => { state.calls.push("add:" + type); return null; };
@@ -1327,6 +1334,19 @@ test("검색 결과 고르기: 다른 캔버스면 이동을 예약하고, 없�
     anchorId: "sub",
   });
   assert.equal(h.state.calls.length, before);
+});
+
+test("태그 렌즈: 태그를 누르면 검색이 #태그로 바로 열려 그 태그 노드만 또렷해진다", () => {
+  const h = setup();
+  h.state.searchActive = 4;
+  h.call("openTagLens", { id: "t", name: "디자인", color: "moss" });
+  assert.equal(h.state.searchOpen, true);
+  // 끝의 공백은 태그 후보 칩을 다시 띄우지 않게 한다. 디바운스 없이 바로 흐린다.
+  assert.equal(h.state.searchQuery, "#디자인 ");
+  assert.equal(h.state.debouncedQuery, "#디자인 ");
+  assert.equal(h.state.searchActive, null);
+  assert.ok(h.state.calls.includes("focus-search"));
+  assert.equal(h.state.history.past.length, 0);
 });
 
 test("단축키: Ctrl/Cmd+F는 입력칸 안에서도 브라우저 찾기 대신 노드 검색을 연다", () => {

@@ -6,7 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import { CONNECTION_SIDES } from "./connections";
-import { connectionColor } from "./connection-colors";
+import TagPeek from "./tag-peek";
 import type {
   TagDefinition,
   ConnectionSide,
@@ -52,9 +52,9 @@ export type NodeFrameProps = {
   searchState?: "none" | "match" | "dimmed";
   /** 검색 목록에서 가리키고 있는 노드. */
   highlighted?: boolean;
+  /** 태그 미리보기에서 태그를 누르면 그 태그 노드를 모아 본다. */
+  onTagLens?: (tag: TagDefinition) => void;
 };
-
-const MAX_TAG_DOTS = 3;
 
 export default function NodeFrame({
   node,
@@ -73,6 +73,7 @@ export default function NodeFrame({
   tags = [],
   searchState = "none",
   highlighted = false,
+  onTagLens,
 }: NodeFrameProps) {
   const tagNames = tags.map((tag) => tag.name).join(", ");
   const label =
@@ -204,27 +205,7 @@ export default function NodeFrame({
               {node.title || placeholder}
             </span>
           )}
-          {tags.length > 0 && (
-            <span
-              title={tagNames}
-              aria-hidden="true"
-              className="ml-2 flex shrink-0 items-center gap-1"
-            >
-              {tags.slice(0, MAX_TAG_DOTS).map((tag) => (
-                <span
-                  key={tag.id}
-                  data-tag-dot=""
-                  className="h-2 w-2 rounded-full"
-                  style={{ backgroundColor: connectionColor(tag.color).value }}
-                />
-              ))}
-              {tags.length > MAX_TAG_DOTS && (
-                <span className="text-xs text-lichen tabular-nums">
-                  +{tags.length - MAX_TAG_DOTS}
-                </span>
-              )}
-            </span>
-          )}
+          {tags.length > 0 && <TagPeek tags={tags} onLens={onTagLens} />}
         </header>
         {children}
         <button

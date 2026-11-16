@@ -86,11 +86,17 @@ const fourTags = (["UI", "회의", "자료", "버튼"] as const).map(
   }),
 );
 
-test("태그 4개면 색 점 3개와 +1, 이름은 툴팁과 aria-label에", () => {
+test("태그 4개면 색 점 3개와 +1, 점 묶음은 태그 미리보기를 여는 버튼이다", () => {
   const html = renderFrame({ tags: fourTags });
   assert.equal((html.match(/data-tag-dot/g) ?? []).length, 3);
   assert.match(html, />\+1</);
-  assert.match(html, /title="UI, 회의, 자료, 버튼"/);
+  // 브라우저 기본 툴팁 대신 미리보기 카드를 쓴다. 머리의 툴팁도 물려받지 않는다.
+  assert.doesNotMatch(html, /title="UI, 회의, 자료, 버튼"/);
+  assert.match(html, /<button[^>]*data-tag-peek=""[^>]*>/);
+  const trigger = html.match(/<button[^>]*data-tag-peek=""[^>]*>/)![0];
+  assert.match(trigger, /aria-label="태그 4개: UI, 회의, 자료, 버튼"/);
+  assert.match(trigger, /aria-expanded="false"/);
+  assert.match(trigger, /title=""/);
   assert.match(
     html,
     /aria-label="텍스트 노드: 회의 메모, 태그: UI, 회의, 자료, 버튼"/,
