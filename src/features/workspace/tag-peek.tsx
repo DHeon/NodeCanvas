@@ -14,9 +14,14 @@ import { SearchIcon } from "./icons";
 import type { TagDefinition } from "./types";
 
 const MAX_TAG_DOTS = 3;
-const OPEN_DELAY = 120;
-const CLOSE_DELAY = 140;
 const GAP = 8;
+/** 이보다 오래 누르고 있다 떼면 "잡기"로 보고 미리보기를 열지 않는다. */
+const QUICK_PRESS_MS = 350;
+
+/** 짧게 누른 클릭인지. 키보드로 누른 클릭은 누른 시간이 없어(null) 연다. */
+export function isQuickPress(pressedForMs: number | null): boolean {
+  return pressedForMs === null || pressedForMs < QUICK_PRESS_MS;
+}
 
 type TagPeekProps = {
   tags: TagDefinition[];
@@ -25,7 +30,8 @@ type TagPeekProps = {
 };
 
 /**
- * 노드 머리의 태그 점 묶음. 가리키거나 포커스하면 화면 위에 작은 카드로 태그 이름을 보여준다.
+ * 노드 머리의 태그 점 묶음. 짧게 누르면 화면 위에 작은 카드로 태그 이름을 보여준다.
+ * 누른 채 끌면 노드를 옮기고, 꾹 누르고 있다 떼면 아무것도 열지 않는다.
  * 카드는 캔버스 확대와 무관하게 같은 크기로 떠서 축소 화면에서도 읽힌다.
  */
 export default function TagPeek({ tags, onLens }: TagPeekProps) {
@@ -33,21 +39,15 @@ export default function TagPeek({ tags, onLens }: TagPeekProps) {
   const [place, setPlace] = useState<CSSProperties | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
-  const timerRef = useRef<number | undefined>(undefined);
+  const pressedAtRef = useRef<number | null>(null);
   const focusFirstRef = useRef(false);
   const cardId = useId();
   const names = tags.map((tag) => tag.name).join(", ");
 
-  function schedule(next: boolean, delay: number) {
-    window.clearTimeout(timerRef.current);
-    timerRef.current = window.setTimeout(() => setOpen(next), delay);
-  }
   function close(returnFocus = false) {
-    window.clearTimeout(timerRef.current);
     setOpen(false);
     if (returnFocus) triggerRef.current?.focus({ preventScroll: true });
   }
-  useEffect(() => () => window.clearTimeout(timerRef.current), []);
 
   // 점 묶음 바로 아래, 점의 왼쪽 끝에서 오른쪽으로 펼친다. 화면 밖으로 나가면 안쪽으로 당기고,
   // 아래 자리가 모자라면 위로 뒤집는다.
@@ -114,13 +114,20 @@ export default function TagPeek({ tags, onLens }: TagPeekProps) {
         aria-controls={open ? cardId : undefined}
         // 빈 title로 머리("드래그해서 이동…")의 기본 툴팁을 물려받지 않는다.
         title=""
-        // 점 묶음을 잡아도 노드를 끌거나 선택하지 않는다.
-        onPointerDown={(event) => event.stopPropagation()}
+        // 누른 순간은 막지 않는다. 그대로 끌면 머리가 노드 끌기를 맡는다(3px 넘게 움직이면 시작).
+        onPointerDown={(event) => {
+          pressedAtRef.current = event.button === 0 ? event.timeStamp : null;
+        }}
         onDoubleClick={(event) => event.stopPropagation()}
-        onPointerEnter={() => schedule(true, OPEN_DELAY)}
-        onPointerLeave={() => schedule(false, CLOSE_DELAY)}
-        onClick={() => {
-          window.clearTimeout(timerRef.current);
+        onClick={(event) => {
+          const pressedAt = pressedAtRef.current;
+          pressedAtRef.current = null;
+          // 키보드 클릭(detail 0)은 누른 시간이 없다.
+          const pressedFor =
+            event.detail === 0 || pressedAt === null
+              ? null
+              : event.timeStamp - pressedAt;
+          if (!isQuickPress(pressedFor)) return;
           setOpen((value) => !value);
         }}
         onKeyDown={(event) => {
@@ -167,8 +174,6 @@ export default function TagPeek({ tags, onLens }: TagPeekProps) {
             id={cardId}
             role="group"
             aria-label="이 노드의 태그"
-            onPointerEnter={() => schedule(true, 0)}
-            onPointerLeave={() => schedule(false, CLOSE_DELAY)}
             onKeyDown={(event) => {
               if (event.key === "Escape") {
                 event.preventDefault();
@@ -243,11 +248,6 @@ export default function TagPeek({ tags, onLens }: TagPeekProps) {
                 );
               })}
             </ul>
-            {onLens && (
-              <p className="mt-1 border-t border-rule-soft px-2.5 pt-1.5 pb-0.5 text-xs text-lichen">
-                눌러서 이 태그 노드만 모아 보기
-              </p>
-            )}
           </div>,
           document.body,
         )}

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { isQuickPress } from "../src/features/workspace/tag-peek";
 import NodeFrame, {
   type NodeFrameProps,
 } from "../src/features/workspace/node-frame";
@@ -117,4 +118,13 @@ test("검색에 맞지 않는 노드만 흐려진다", () => {
 test("강조된 노드는 두 겹 링을 가진다", () => {
   assert.match(renderFrame({ highlighted: true }), /data-search-highlight/);
   assert.doesNotMatch(renderFrame({}), /data-search-highlight/);
+});
+
+test("태그 점 묶음은 짧게 누를 때만 미리보기를 연다(꾹 누르기는 열지 않는다)", () => {
+  assert.equal(isQuickPress(120), true);
+  assert.equal(isQuickPress(349), true);
+  assert.equal(isQuickPress(350), false);
+  assert.equal(isQuickPress(900), false);
+  // 키보드로 누른 클릭은 누른 시간이 없으므로 연다.
+  assert.equal(isQuickPress(null), true);
 });
