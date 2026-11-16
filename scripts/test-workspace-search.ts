@@ -4,6 +4,7 @@ import test from "node:test";
 import { createWorkspace } from "../src/features/workspace/create-workspace";
 import {
   countNestedMatches,
+  hasSearchTerms,
   MAX_SEARCH_RESULTS,
   parseSearchQuery,
   searchWorkspace,
@@ -79,6 +80,7 @@ test("empty query returns no results", () => {
   const { root } = fixture();
   assert.deepEqual(searchWorkspace(root, "   ", []), {
     results: [],
+    matches: [],
     total: 0,
     truncated: false,
   });
@@ -182,6 +184,33 @@ test("caps at 100 with truncated", () => {
   assert.equal(found.results.length, 100);
   assert.equal(found.total, 120);
   assert.equal(found.truncated, true);
+});
+
+test("hasSearchTerms is false for blank or bare '#' queries", () => {
+  assert.equal(hasSearchTerms(""), false);
+  assert.equal(hasSearchTerms("  # ## "), false);
+  assert.equal(hasSearchTerms("#디"), true);
+  assert.equal(hasSearchTerms("버튼"), true);
+});
+
+test("matches keeps every hit beyond the 100 cap for dimming and badges", () => {
+  const sub = canvas(
+    "하위",
+    Array.from({ length: 50 }, (_, index) => text(`노트 하위 ${index}`)),
+  );
+  const root = createWorkspace();
+  root.nodes = [
+    ...Array.from({ length: 120 }, (_, index) => text(`노트 ${index}`)),
+    sub,
+  ];
+  const found = searchWorkspace(root, "노트", []);
+  assert.equal(found.results.length, 100);
+  assert.equal(found.matches.length, 170);
+  assert.equal(countNestedMatches(found.matches, []).get(sub.id), 50);
+  assert.equal(
+    new Set(found.matches.map((result) => result.anchorId)).size,
+    121,
+  );
 });
 
 test("results recompute after node removal", () => {

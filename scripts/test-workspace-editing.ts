@@ -206,6 +206,7 @@ const names = [
   "startPan",
   "startDrawing",
   "eraseAlong",
+  "pickSearchResult",
 ];
 const functions = new Map<string, string>();
 let clearGesture = "";
@@ -270,6 +271,8 @@ type TestState = {
   spaceHeld?: boolean;
   tool?: "select" | "pen" | "eraser";
   canvasPath?: string[];
+  searchActive?: number | null;
+  pendingFocus?: { key: string; nodeId: string } | null;
 };
 type Handlers = Record<string, (...args: unknown[]) => void>;
 const factory = new Function(
@@ -317,6 +320,13 @@ const factory = new Function(
   const NUDGE_STEP_LARGE = 40;
   const saveWorkspace = async () => { state.calls.push("save"); };
   const openSearch = () => { state.calls.push("search"); };
+  const canvasKey = canvasPath.slice(0, activeDepth).join("/");
+  const pendingFocusRef = {
+    get current() { return state.pendingFocus ?? null; },
+    set current(value) { state.pendingFocus = value; },
+  };
+  const setSearchActive = value => { state.searchActive = value; };
+  const searchInputRef = { current: { focus() { state.calls.push("focus-search"); } } };
   const navigateCanvas = () => { state.calls.push("navigate"); };
   const addNode = type => { state.calls.push("add:" + type); return null; };
   const chooseImage = () => {};
@@ -1036,6 +1046,63 @@ test("다른 포인터 이벤트는 무시하고 버튼이 풀리면 드래그�
   h.call("moveGesture", pointer({ buttons: 0 }));
   assert.equal(h.gestureRef.current, null);
   assert.equal(h.state.history.past.length, 0);
+});
+
+test("검색 결과 고르기: 같은 캔버스면 가운데 두고 선택, 활성 항목을 비우고 검색칸으로 돌아간다", () => {
+  const h = setup();
+  h.state.searchActive = 2;
+  const node = h.state.history.present.nodes[1];
+  h.call("pickSearchResult", { node, path: [], trail: [], anchorId: node.id });
+  assert.deepEqual(h.state.selected, ["b"]);
+  assert.equal(h.state.searchActive, null);
+  // 뷰포트 1000×700 가운데에 노드 중심(700, 470)이 오도록, 배율 0.5 유지
+  assert.deepEqual(h.state.camera, { x: 150, y: 115, zoom: 0.5 });
+  assert.ok(h.state.calls.includes("focus-search"));
+  assert.equal(h.state.history.past.length, 0);
+});
+
+test("검색 결과 고르기: 다른 캔버스면 이동을 예약하고, 없는 노드는 무시한다", () => {
+  const h = setup();
+  const inner = { ...h.state.history.present.nodes[0], id: "inner" };
+  h.state.history = createWorkspaceHistory({
+    ...fixture(),
+    nodes: [
+      ...fixture().nodes,
+      {
+        id: "sub",
+        type: "canvas_node",
+        position: { x: 0, y: 0 },
+        width: 260,
+        height: 140,
+        title: "하위",
+        document: {
+          canvas: { width: 2000, height: 1200 },
+          connections: [],
+          nodes: [inner],
+        },
+      },
+    ],
+  });
+  h.state.searchActive = 3;
+  h.call("pickSearchResult", {
+    node: inner,
+    path: ["sub"],
+    trail: ["하위"],
+    anchorId: "sub",
+  });
+  assert.deepEqual(h.state.pendingFocus, { key: "sub", nodeId: "inner" });
+  assert.ok(h.state.calls.includes("navigate"));
+  assert.equal(h.state.searchActive, null);
+  assert.ok(h.state.calls.includes("focus-search"));
+
+  const before = h.state.calls.length;
+  h.call("pickSearchResult", {
+    node: { ...inner, id: "gone" },
+    path: ["sub"],
+    trail: [],
+    anchorId: "sub",
+  });
+  assert.equal(h.state.calls.length, before);
 });
 
 test("단축키: Ctrl/Cmd+F는 입력칸 안에서도 브라우저 찾기 대신 노드 검색을 연다", () => {

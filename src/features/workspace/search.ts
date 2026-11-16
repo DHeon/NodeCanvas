@@ -32,6 +32,12 @@ export function parseSearchQuery(input: string): SearchQuery {
   return { words, tagPrefixes };
 }
 
+/** 검색어에 실제로 찾을 낱말이 있는지('#'만 있으면 없다). 없으면 흐림도 없다. */
+export function hasSearchTerms(input: string): boolean {
+  const query = parseSearchQuery(input);
+  return query.words.length > 0 || query.tagPrefixes.length > 0;
+}
+
 function searchableText(node: WorkspaceNode, tagNames: string[]) {
   const fields = [node.title, ...tagNames];
   if (node.type === "text_node") fields.push(node.text);
@@ -57,10 +63,17 @@ export function searchWorkspace(
   root: WorkspaceDocument,
   input: string,
   currentPath: readonly string[],
-): { results: SearchResult[]; total: number; truncated: boolean } {
+): {
+  /** 목록에 보일 앞쪽 100개. */
+  results: SearchResult[];
+  /** 잘리지 않은 모든 결과(흐림·배지 계산용). */
+  matches: SearchResult[];
+  total: number;
+  truncated: boolean;
+} {
   const query = parseSearchQuery(input);
   if (!query.words.length && !query.tagPrefixes.length)
-    return { results: [], total: 0, truncated: false };
+    return { results: [], matches: [], total: 0, truncated: false };
 
   const tagNames = new Map(
     (root.tags ?? []).map((tag) => [tag.id, tag.name.toLowerCase()]),
@@ -107,6 +120,7 @@ export function searchWorkspace(
   );
   return {
     results: found.slice(0, MAX_SEARCH_RESULTS),
+    matches: found,
     total: found.length,
     truncated: found.length > MAX_SEARCH_RESULTS,
   };

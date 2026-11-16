@@ -3,7 +3,7 @@
 import { useEffect, useId, type Ref } from "react";
 import { connectionColor } from "./connection-colors";
 import { CloseIcon, SearchIcon } from "./icons";
-import type { SearchResult } from "./search";
+import { hasSearchTerms, type SearchResult } from "./search";
 import type { TagDefinition } from "./types";
 import { nodeDisplayName, nodeTypeLabel } from "./workspace-tree";
 
@@ -73,7 +73,7 @@ export default function SearchPanel({
       ?.scrollIntoView({ block: "nearest" });
   }, [activeIndex, listId]);
 
-  const hasQuery = query.trim().length > 0;
+  const hasQuery = hasSearchTerms(query);
 
   return (
     <section

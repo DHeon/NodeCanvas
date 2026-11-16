@@ -24,6 +24,7 @@ import CanvasNodeView from "./canvas-node-view";
 import { ArrowLeftIcon, MinusIcon, PlusIcon, SearchIcon } from "./icons";
 import {
   countNestedMatches,
+  hasSearchTerms,
   searchWorkspace,
   type SearchResult,
 } from "./search";
@@ -1743,10 +1744,13 @@ export default function Workspace({
         : undefined;
     if (!node) return;
     if (tool !== "select") changeTool("select");
+    // 결과 순서가 바뀔 수 있으니 활성 항목을 비우고, 다음 검색을 이어가도록 검색칸으로 돌아간다.
+    setSearchActive(null);
     const key = result.path.join("/");
     if (key !== canvasKey) {
       pendingFocusRef.current = { key, nodeId: node.id };
       navigateCanvas(result.path);
+      searchInputRef.current?.focus();
       return;
     }
     const viewport = viewportRef.current;
@@ -1760,6 +1764,7 @@ export default function Workspace({
     }
     setSelectedNodeIds([node.id]);
     setSelectedConnectionId(null);
+    searchInputRef.current?.focus();
   }
 
   function navigateCanvas(path: string[]) {
@@ -2167,7 +2172,7 @@ export default function Workspace({
   );
   const search = useMemo(
     () =>
-      searchOpen && debouncedQuery.trim()
+      searchOpen && hasSearchTerms(debouncedQuery)
         ? searchWorkspace(
             rootDocument,
             debouncedQuery,
@@ -2179,10 +2184,10 @@ export default function Workspace({
   const searchResults = search?.results ?? [];
   // 지금 캔버스에서 결과를 대표하는 노드. 검색 중이 아니면 null(흐림 없음).
   const searchAnchors = search
-    ? new Set(searchResults.flatMap((result) => result.anchorId ?? []))
+    ? new Set(search.matches.flatMap((result) => result.anchorId ?? []))
     : null;
   const nestedSearchCounts = search
-    ? countNestedMatches(searchResults, canvasKey ? canvasKey.split("/") : [])
+    ? countNestedMatches(search.matches, canvasKey ? canvasKey.split("/") : [])
     : null;
   const highlightedNodeId =
     searchActive === null

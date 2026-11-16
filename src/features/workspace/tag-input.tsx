@@ -22,6 +22,15 @@ type TagInputProps = {
 
 const MAX_SUGGESTIONS = 8;
 
+/** Enter로 붙일 이름: 방향키로 후보를 고른 경우에만 후보, 아니면 입력한 그대로. */
+export function chooseTagToSubmit(
+  value: string,
+  suggestions: readonly TagDefinition[],
+  active: number | null,
+): string {
+  return (active === null ? undefined : suggestions[active]?.name) ?? value;
+}
+
 /** 붙은 태그 칩 + 자동완성 입력 + 칩 색 바꾸기. 하나·여러 노드 선택에서 함께 쓴다. */
 export default function TagInput({
   allTags,
@@ -32,7 +41,8 @@ export default function TagInput({
   onRecolor,
 }: TagInputProps) {
   const [value, setValue] = useState("");
-  const [active, setActive] = useState(0);
+  // 방향키로 후보를 고르기 전에는 아무 후보도 활성화하지 않는다(Enter = 입력한 이름).
+  const [active, setActive] = useState<number | null>(null);
   const [paletteFor, setPaletteFor] = useState<string | null>(null);
   const listId = useId();
 
@@ -54,7 +64,7 @@ export default function TagInput({
     if (!name.trim()) return;
     onAdd(name);
     setValue("");
-    setActive(0);
+    setActive(null);
   }
 
   return (
@@ -157,23 +167,26 @@ export default function TagInput({
           aria-autocomplete="list"
           onChange={(event) => {
             setValue(event.target.value);
-            setActive(0);
+            setActive(null);
           }}
           onKeyDown={(event) => {
             // 한글 조합을 끝내는 Enter는 태그를 만들지 않는다.
             if (event.nativeEvent.isComposing || event.keyCode === 229) return;
             if (event.key === "ArrowDown" && suggestions.length) {
               event.preventDefault();
-              setActive((index) => (index + 1) % suggestions.length);
+              setActive((index) =>
+                index === null ? 0 : (index + 1) % suggestions.length,
+              );
             } else if (event.key === "ArrowUp" && suggestions.length) {
               event.preventDefault();
-              setActive(
-                (index) =>
-                  (index - 1 + suggestions.length) % suggestions.length,
+              setActive((index) =>
+                index === null
+                  ? suggestions.length - 1
+                  : (index - 1 + suggestions.length) % suggestions.length,
               );
             } else if (event.key === "Enter") {
               event.preventDefault();
-              submit(suggestions[active]?.name ?? value);
+              submit(chooseTagToSubmit(value, suggestions, active));
             } else if (event.key === "Escape" && value) {
               event.stopPropagation();
               setValue("");

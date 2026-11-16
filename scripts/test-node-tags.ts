@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
+import { chooseTagToSubmit } from "../src/features/workspace/tag-input";
 import { createWorkspace } from "../src/features/workspace/create-workspace";
 import type {
   TagDefinition,
@@ -276,4 +277,13 @@ test("countTagUsage sums nodes at every depth", () => {
   const usage = countTagUsage(document);
   assert.equal(usage.get(document.tags![0].id), 1);
   assert.equal(usage.get(document.tags![1].id), 2);
+});
+
+test("tag input Enter submits typed text unless a suggestion was chosen", () => {
+  const build = { id: "1", name: "build", color: "moss" as const };
+  const gui = { id: "2", name: "GUI", color: "teal" as const };
+  // 'ui'를 쳤을 때 'build', 'GUI'가 후보로 떠도 Enter는 입력한 이름을 쓴다.
+  assert.equal(chooseTagToSubmit("ui", [build, gui], null), "ui");
+  assert.equal(chooseTagToSubmit("ui", [build, gui], 1), "GUI");
+  assert.equal(chooseTagToSubmit("ui", [], 3), "ui");
 });
