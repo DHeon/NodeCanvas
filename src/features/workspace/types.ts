@@ -23,6 +23,15 @@ export type NodeBase = {
   width: number;
   height: number;
   title: string;
+  // 루트 문서 tags 목록의 TagDefinition.id. 비면 필드를 생략한다.
+  tags?: string[];
+};
+
+/** 프로젝트 공용 태그. 루트 문서에만 목록이 있고 하위 캔버스가 함께 쓴다. */
+export type TagDefinition = {
+  id: string;
+  name: string;
+  color: ConnectionColor;
 };
 
 // 노드 종류별 내용만 나누고 좌표·크기·연결 동작은 공유한다.
@@ -99,6 +108,8 @@ export type WorkspaceDocument = {
   };
   nodes: WorkspaceNode[];
   connections: NodeConnection[];
+  // 루트 문서에만 있는 프로젝트 태그 목록. 없으면 태그 없음.
+  tags?: TagDefinition[];
   // 공간마다 따로 저장하는 손그림. 없으면 그림 없음.
   drawing?: { strokes: DrawingStroke[] };
 };

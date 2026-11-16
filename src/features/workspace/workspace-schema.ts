@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { WorkspaceDocument } from "./types";
 import { getConnectionKey, MAX_CONNECTIONS } from "./connections";
 import { CONNECTION_COLOR_KEYS } from "./connection-colors";
+import { MAX_NODE_TAGS, MAX_PROJECT_TAGS, TAG_NAME_PATTERN } from "./tags";
 import {
   MAX_DRAWING_POINTS,
   MAX_POINTS_PER_STROKE,
@@ -59,6 +60,20 @@ const nodeBaseSchema = z.strictObject({
   width: z.number().positive().max(10000),
   height: z.number().positive().max(10000),
   title: z.string().max(200),
+  tags: z
+    .array(z.uuid())
+    .min(1)
+    .max(MAX_NODE_TAGS)
+    .refine((ids) => new Set(ids).size === ids.length, {
+      message: "노드에 같은 태그가 두 번 붙었습니다.",
+    })
+    .optional(),
+});
+
+const tagDefinitionSchema = z.strictObject({
+  id: z.uuid(),
+  name: z.string().regex(TAG_NAME_PATTERN),
+  color: z.enum(CONNECTION_COLOR_KEYS),
 });
 
 const textStyleSchema = z.strictObject({
@@ -162,6 +177,11 @@ function documentSchemaAtDepth(depth: number): z.ZodType<WorkspaceDocument> {
       // 이전에 저장한 문서에는 연결선 항목이 없어도 열린다.
       connections: z.array(connectionSchema).max(MAX_CONNECTIONS).default([]),
       drawing: drawingSchema.optional(),
+      // 태그 목록은 루트에만 둔다. 하위 문서에 목록이 있으면 거절한다.
+      tags:
+        depth === 0
+          ? z.array(tagDefinitionSchema).min(1).max(MAX_PROJECT_TAGS).optional()
+          : z.undefined().optional(),
     })
     .refine(
       (document) => {
@@ -222,8 +242,30 @@ export const workspaceDocumentSchema = documentSchemaAtDepth(0).superRefine(
       return;
     }
 
+    const tagIds = new Set<string>();
+    const tagNames = new Set<string>();
+    for (const tag of document.tags ?? []) {
+      const name = tag.name.toLowerCase();
+      if (tagIds.has(tag.id) || tagNames.has(name)) {
+        context.addIssue({
+          code: "custom",
+          message: "태그 ID나 이름이 중복되었습니다.",
+        });
+        return;
+      }
+      tagIds.add(tag.id);
+      tagNames.add(name);
+    }
+
     const ids = new Set<string>();
     for (const node of walkWorkspaceNodes(document)) {
+      if (node.tags?.some((id) => !tagIds.has(id))) {
+        context.addIssue({
+          code: "custom",
+          message: "노드에 없는 태그가 붙어 있습니다.",
+        });
+        return;
+      }
       if (ids.has(node.id)) {
         context.addIssue({
           code: "custom",
