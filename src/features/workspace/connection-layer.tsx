@@ -32,6 +32,13 @@ export default function ConnectionLayer({
 }: ConnectionLayerProps) {
   const nodesById = new Map(nodes.map((node) => [node.id, node]));
   const draftSource = draft ? nodesById.get(draft.source.nodeId) : undefined;
+  // 다중 연결에서 함께 끌려 나오는 선. 대상 노드 자신에서 나오는 선은 그리지 않는다.
+  const draftOthers = (draft?.others ?? []).flatMap((endpoint) => {
+    const node = nodesById.get(endpoint.nodeId);
+    return node && endpoint.nodeId !== draft?.target?.nodeId
+      ? [{ endpoint, node }]
+      : [];
+  });
 
   return (
     <svg
@@ -122,6 +129,24 @@ export default function ConnectionLayer({
       })}
       {draft && draftSource && (
         <>
+          {draftOthers.map(({ endpoint, node }) => (
+            <path
+              key={endpoint.nodeId}
+              data-connection-preview=""
+              d={getStyledConnectionPath(
+                canvas.lineStyle,
+                getConnectionPoint(node, endpoint.side),
+                draft.pointer,
+                endpoint.side,
+                draft.target?.side,
+              )}
+              stroke="var(--color-moss-deep)"
+              strokeWidth={2}
+              strokeOpacity={0.7}
+              strokeDasharray={draft.target ? undefined : "5 4"}
+              vectorEffect="non-scaling-stroke"
+            />
+          ))}
           <path
             data-connection-preview=""
             d={getStyledConnectionPath(

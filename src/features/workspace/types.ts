@@ -93,6 +93,8 @@ export type ConnectionDraft = {
   pointer: Point;
   hoveredNodeId: string | null;
   target: ConnectionEndpoint | null;
+  /** 다중 선택에서 함께 끌려 나오는 나머지 노드의 출발점(잡은 점과 같은 변). */
+  others?: ConnectionEndpoint[];
 };
 
 //캔버스 데이터

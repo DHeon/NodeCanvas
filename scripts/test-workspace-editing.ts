@@ -17,6 +17,7 @@ import {
   CONNECTION_SIDES,
   CONNECTION_SNAP_RADIUS,
   MAX_CONNECTIONS,
+  connectSourcesToTarget,
   findConnectionTarget,
   getConnectionKey,
   getConnectionPath,
@@ -265,6 +266,7 @@ type TestState = {
     pointer: Point;
     hoveredNodeId: string | null;
     target: ConnectionEndpoint | null;
+    others?: ConnectionEndpoint[];
   } | null;
   hoveredElement: TestElement | null;
   calls: string[];
@@ -292,6 +294,7 @@ const factory = new Function(
   "resolveWorkspacePath",
   "updateWorkspaceAtPath",
   "drawing",
+  "connectSourcesToTarget",
   `
   const { appendPoint, appendStroke, countDocumentDrawingPoints, eraseStrokes,
     exceedsDrawingLimits, simplifyPoints, MAX_DRAWING_POINTS, MAX_STROKES_PER_CANVAS } = drawing;
@@ -400,6 +403,7 @@ function setup(selected: string[] = []) {
         resolveWorkspacePath,
         updateWorkspaceAtPath,
         drawing,
+        connectSourcesToTarget,
       )[name](...args);
     },
   };
@@ -520,6 +524,111 @@ test("점 근처에서 미리보기가 스냅되고 한 단계로 연결·실행
   assert.equal(h.state.history.present, document);
   h.call("redo");
   assert.equal(h.state.history.present.connections[0], connection);
+});
+
+test("connectSourcesToTarget는 자기 자신·중복·한도 초과 몫을 건너뛴다", () => {
+  const target = { nodeId: "b", side: "left" } as const;
+  const existing = [
+    { id: "x", source: { nodeId: "c", side: "right" as const }, target },
+  ];
+  const sources = (["a", "b", "c"] as const).map((nodeId) => ({
+    nodeId,
+    side: "right" as const,
+  }));
+  let n = 0;
+  const makeId = () => `new-${++n}`;
+  const result = connectSourcesToTarget(
+    existing,
+    new Set(["a", "b", "c"]),
+    sources,
+    target,
+    makeId,
+  );
+  assert.deepEqual(result.added, [
+    { id: "new-1", source: { nodeId: "a", side: "right" }, target },
+  ]);
+  assert.equal(result.skippedForLimit, 0);
+
+  // 한도가 하나만 남으면 첫 몫만 잇고 나머지는 한도 때문에 건너뛴다.
+  const limited = connectSourcesToTarget(
+    [],
+    new Set(["a", "b", "c"]),
+    sources,
+    target,
+    makeId,
+    1,
+  );
+  assert.deepEqual(
+    limited.added.map((connection) => connection.source.nodeId),
+    ["a"],
+  );
+  assert.equal(limited.skippedForLimit, 1);
+});
+
+test("다중 선택에서 연결점을 끌면 선택한 노드 모두가 같은 변에서 한 단계로 연결된다", () => {
+  const h = setup(["a", "c"]);
+  const document = h.state.history.present;
+  h.call("startNodeConnection", pointer(), document.nodes[0], "right");
+  assert.deepEqual(h.state.selected, ["a", "c"]);
+  assert.deepEqual(h.state.draft?.others, [{ nodeId: "c", side: "right" }]);
+  h.state.hoveredElement = new TestElement(false, true, {
+    nodeId: "b",
+    connectionSide: "left",
+  });
+  h.call("moveGesture", pointer({ clientX: 310, clientY: 269 }));
+  assert.deepEqual(h.state.draft?.others, [{ nodeId: "c", side: "right" }]);
+  h.call(
+    "endGesture",
+    pointer({ type: "pointerup", buttons: 0, clientX: 310, clientY: 269 }),
+  );
+  assert.deepEqual(
+    h.state.history.present.connections.map((connection) => [
+      connection.source,
+      connection.target,
+    ]),
+    [
+      [
+        { nodeId: "a", side: "right" },
+        { nodeId: "b", side: "left" },
+      ],
+      [
+        { nodeId: "c", side: "right" },
+        { nodeId: "b", side: "left" },
+      ],
+    ],
+  );
+  assert.equal(h.state.history.past.length, 1);
+  assert.deepEqual(h.state.selected, ["a", "c"]);
+  h.call("undo");
+  assert.equal(h.state.history.present, document);
+});
+
+test("다중 연결: 대상이 선택 안에 있으면 그 노드는 건너뛰고, 선택 밖 노드를 잡으면 하나만 잇는다", () => {
+  const h = setup(["a", "b"]);
+  const document = h.state.history.present;
+  h.call("startNodeConnection", pointer(), document.nodes[0], "right");
+  h.state.hoveredElement = new TestElement(false, true, {
+    nodeId: "b",
+    connectionSide: "left",
+  });
+  h.call(
+    "endGesture",
+    pointer({ type: "pointerup", buttons: 0, clientX: 310, clientY: 269 }),
+  );
+  assert.deepEqual(
+    h.state.history.present.connections.map((c) => c.source.nodeId),
+    ["a"],
+  );
+
+  const single = setup(["b", "c"]);
+  single.call(
+    "startNodeConnection",
+    pointer(),
+    single.state.history.present.nodes[0],
+    "right",
+  );
+  assert.deepEqual(single.state.selected, ["a"]);
+  assert.equal(single.state.draft?.others, undefined);
 });
 
 test("Escape·포인터 취소·캡처 해제·창 전환은 연결을 만들지 않는다", () => {

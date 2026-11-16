@@ -218,3 +218,34 @@ export function getStyledConnectionPath(
     ? roundedPolyline(orthogonalPoints(start, end, sourceSide, targetSide))
     : getConnectionPath(start, end, sourceSide, targetSide);
 }
+
+/**
+ * 여러 출발점을 한 대상 연결점에 잇는다(다중 선택 연결).
+ * 대상 노드 자신, 이미 있는 연결, 없는 노드는 조용히 건너뛰고 한도를 넘는 몫만 따로 센다.
+ */
+export function connectSourcesToTarget(
+  connections: readonly NodeConnection[],
+  nodeIds: ReadonlySet<string>,
+  sources: readonly ConnectionEndpoint[],
+  target: ConnectionEndpoint,
+  makeId: () => string,
+  limit = MAX_CONNECTIONS,
+): { added: NodeConnection[]; skippedForLimit: number } {
+  const added: NodeConnection[] = [];
+  let skippedForLimit = 0;
+  if (!nodeIds.has(target.nodeId)) return { added, skippedForLimit };
+  const keys = new Set(connections.map(getConnectionKey));
+  for (const source of sources) {
+    if (source.nodeId === target.nodeId || !nodeIds.has(source.nodeId))
+      continue;
+    const key = getConnectionKey({ source, target });
+    if (keys.has(key)) continue;
+    if (connections.length + added.length >= limit) {
+      skippedForLimit++;
+      continue;
+    }
+    keys.add(key);
+    added.push({ id: makeId(), source, target });
+  }
+  return { added, skippedForLimit };
+}

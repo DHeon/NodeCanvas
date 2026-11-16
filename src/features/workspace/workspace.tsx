@@ -90,9 +90,9 @@ import {
 } from "./workspace-tree";
 import {
   findConnectionTarget,
-  getConnectionKey,
   getConnectionPoint,
   MAX_CONNECTIONS,
+  connectSourcesToTarget,
 } from "./connections";
 import {
   createWorkspaceHistory,
@@ -109,7 +109,6 @@ import type {
   ConnectionEndpoint,
   ConnectionDraft,
   ConnectionSide,
-  NodeConnection,
   Point,
   WorkspaceNode,
   ImageNode,
@@ -168,6 +167,8 @@ type Gesture =
       pointerId: number;
       startPointer: Point;
       source: ConnectionEndpoint;
+      /** 다중 선택이면 함께 잇는 나머지 노드(잡은 점과 같은 변). */
+      others: ConnectionEndpoint[];
     }
   | {
       // 펜: 손을 뗄 때 시작한 공간(path)에 한 번에 붙인다.
@@ -1372,19 +1373,33 @@ export default function Workspace({
     viewport.setPointerCapture(event.pointerId);
 
     const source: ConnectionEndpoint = { nodeId: node.id, side };
+    // 잡은 노드가 다중 선택 안에 있으면 선택한 노드 모두가 같은 변에서 함께 잇는다.
+    const multi =
+      selectedNodeIds.length > 1 && selectedNodeIds.includes(node.id);
+    const others: ConnectionEndpoint[] = multi
+      ? workspace.nodes
+          .filter(
+            (candidate) =>
+              candidate.id !== node.id &&
+              selectedNodeIds.includes(candidate.id),
+          )
+          .map((candidate) => ({ nodeId: candidate.id, side }))
+      : [];
     gestureRef.current = {
       kind: "connect",
       pointerId: event.pointerId,
       startPointer: { x: event.clientX, y: event.clientY },
       source,
+      others,
     };
     setConnectionDraft({
       source,
       pointer: getConnectionPoint(node, side),
       hoveredNodeId: node.id,
       target: null,
+      ...(others.length ? { others } : {}),
     });
-    setSelectedNodeIds([node.id]);
+    if (!multi) setSelectedNodeIds([node.id]);
     setSelectedConnectionId(null);
   }
 
@@ -1439,6 +1454,7 @@ export default function Workspace({
             ? getConnectionPoint(targetNode, hover.target.side)
             : pointer,
         ...hover,
+        ...(gesture.others.length ? { others: gesture.others } : {}),
       });
       return;
     }
@@ -1600,28 +1616,37 @@ export default function Workspace({
         gesture.source,
       );
       if (target) {
-        const connection: NodeConnection = {
-          id: uuidv4(),
-          source: gesture.source,
+        const sources = [gesture.source, ...gesture.others];
+        const nodeIdsOf = (document: WorkspaceDocument) =>
+          new Set(document.nodes.map((node) => node.id));
+        const preview = connectSourcesToTarget(
+          workspace.connections,
+          nodeIdsOf(workspace),
+          sources,
           target,
-        };
-        setWorkspace((current) => {
-          const nodeIds = new Set(current.nodes.map((node) => node.id));
-          const key = getConnectionKey(connection);
-          if (
-            !nodeIds.has(connection.source.nodeId) ||
-            !nodeIds.has(connection.target.nodeId) ||
-            current.connections.length >= MAX_CONNECTIONS ||
-            current.connections.some(
-              (existing) => getConnectionKey(existing) === key,
-            )
-          )
-            return current;
-          return {
-            ...current,
-            connections: [...current.connections, connection],
-          };
-        });
+          uuidv4,
+        );
+        if (preview.skippedForLimit > 0)
+          setNotice(
+            `연결선은 캔버스마다 ${MAX_CONNECTIONS}개까지라 ${preview.skippedForLimit}개는 잇지 못했어요.`,
+          );
+        if (preview.added.length) {
+          // 갱신 함수 안에서도 같은 ID를 쓰도록 미리 만든 ID를 차례로 넘긴다.
+          const ids = preview.added.map((connection) => connection.id);
+          setWorkspace((current) => {
+            let next = 0;
+            const { added } = connectSourcesToTarget(
+              current.connections,
+              nodeIdsOf(current),
+              sources,
+              target,
+              () => ids[next++] ?? uuidv4(),
+            );
+            return added.length
+              ? { ...current, connections: [...current.connections, ...added] }
+              : current;
+          });
+        }
       }
     }
 
