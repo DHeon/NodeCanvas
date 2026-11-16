@@ -202,7 +202,7 @@ export default function TagPeek({ tags, onLens }: TagPeekProps) {
               )
                 close();
             }}
-            className="tag-peek fixed z-50 w-max max-w-64 min-w-40 rounded-xl border border-rule bg-white p-1.5 shadow-float"
+            className="tag-peek chrome-no-select fixed z-50 w-max max-w-64 min-w-40 rounded-xl border border-rule bg-white p-1.5 shadow-float"
             // 자리를 재기 전 한 프레임은 보이지 않게 둔다.
             style={place ?? { visibility: "hidden", top: 0, left: 0 }}
           >

@@ -2368,7 +2368,7 @@ export default function Workspace({
 
   return (
     <main
-      className="fixed inset-0 flex flex-col bg-mist-deep text-bark caret-ink [color-scheme:light]"
+      className="chrome-no-select fixed inset-0 flex flex-col bg-mist-deep text-bark caret-ink [color-scheme:light]"
       onKeyDown={handleWorkspaceKeyDown}
       onPaste={handlePaste}
     >

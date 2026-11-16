@@ -76,6 +76,16 @@
   }
 }
 
+/* 편집기의 버튼 글자·안내·상태 문구는 드래그해도 선택되지 않는다. 사용자가 글을 쓰는 칸만 선택된다. */
+.chrome-no-select {
+  -webkit-user-select: none;
+  user-select: none;
+}
+.chrome-no-select :is(input, textarea, [contenteditable="true"]) {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 ::selection {
   background: #d6dfc1;
   color: #252c26;
