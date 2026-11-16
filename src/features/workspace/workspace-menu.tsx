@@ -1,11 +1,23 @@
 import { useEffect, useRef, useState, type SubmitEvent } from "react";
-import type { WorkspaceDocument } from "./types";
+import {
+  CONNECTION_COLORS,
+  connectionColor,
+  type ConnectionColor,
+} from "./connection-colors";
+import type { TagDefinition, WorkspaceDocument } from "./types";
+
+type MenuId = "file" | "edit" | "view" | "tags";
 
 export default function WorkspaceMenu({
   canvas,
   onApply,
   onExport,
   onViewChange,
+  tags,
+  tagUsage,
+  onTagRename,
+  onTagRecolor,
+  onTagDelete,
 }: {
   canvas: WorkspaceDocument["canvas"];
   onApply: (canvas: WorkspaceDocument["canvas"]) => string | null;
@@ -13,8 +25,14 @@ export default function WorkspaceMenu({
   onViewChange: (
     patch: Pick<WorkspaceDocument["canvas"], "lineStyle" | "grid">,
   ) => void;
+  tags: TagDefinition[];
+  tagUsage: Map<string, number>;
+  /** 오류 문구를 돌려주거나, 바꿨으면 null. */
+  onTagRename: (tagId: string, name: string) => string | null;
+  onTagRecolor: (tagId: string, color: ConnectionColor) => void;
+  onTagDelete: (tagId: string) => void;
 }) {
-  const [menu, setMenu] = useState<"file" | "edit" | "view" | null>(null);
+  const [menu, setMenu] = useState<MenuId | null>(null);
   const [width, setWidth] = useState(String(canvas.width));
   const [height, setHeight] = useState(String(canvas.height));
   const [infinite, setInfinite] = useState(!!canvas.infinite);
@@ -34,7 +52,7 @@ export default function WorkspaceMenu({
     return () => document.removeEventListener("pointerdown", dismiss);
   }, [menu]);
 
-  function toggle(next: "file" | "edit" | "view", button: HTMLButtonElement) {
+  function toggle(next: MenuId, button: HTMLButtonElement) {
     trigger.current = button;
     if (next === "edit") {
       setWidth(String(canvas.width));
@@ -79,6 +97,7 @@ export default function WorkspaceMenu({
           ["file", "파일"],
           ["edit", "편집"],
           ["view", "보기"],
+          ["tags", "태그"],
         ] as const
       ).map(([id, label]) => (
         <div key={id} className="relative">
@@ -169,6 +188,47 @@ export default function WorkspaceMenu({
                   </p>
                 </div>
               )}
+              {id === "tags" && (
+                <div className="space-y-3">
+                  <h2 className="font-medium text-bark">
+                    태그{" "}
+                    <span className="text-xs font-normal text-lichen tabular-nums">
+                      {tags.length}개
+                    </span>
+                  </h2>
+                  {tags.length === 0 ? (
+                    <p className="text-xs leading-5 break-keep text-lichen">
+                      아직 태그가 없어요. 노드 속성에서 태그를 붙여보세요.
+                    </p>
+                  ) : (
+                    <ul className="-mx-1 max-h-72 space-y-1 overflow-y-auto px-1">
+                      {tags.map((tag) => (
+                        <TagRow
+                          key={tag.id}
+                          tag={tag}
+                          count={tagUsage.get(tag.id) ?? 0}
+                          onRename={(name) => onTagRename(tag.id, name)}
+                          onRecolor={(color) => onTagRecolor(tag.id, color)}
+                          onDelete={() => {
+                            const count = tagUsage.get(tag.id) ?? 0;
+                            if (
+                              count > 0 &&
+                              !window.confirm(
+                                `"${tag.name}" 태그를 지울까요? 이 태그를 단 노드 ${count}개에서 모두 떨어집니다. 실행 취소로 되돌릴 수 있습니다.`,
+                              )
+                            )
+                              return;
+                            onTagDelete(tag.id);
+                          }}
+                        />
+                      ))}
+                    </ul>
+                  )}
+                  <p className="text-xs leading-5 break-keep text-lichen">
+                    이름과 색은 이 프로젝트의 모든 캔버스에 함께 바뀌어요.
+                  </p>
+                </div>
+              )}
               {id === "edit" && (
                 <form onSubmit={submit} className="space-y-4">
                   <h2 className="font-medium text-bark">캔버스 크기</h2>
@@ -241,5 +301,139 @@ export default function WorkspaceMenu({
         </div>
       ))}
     </nav>
+  );
+}
+
+/** 태그 관리 목록의 한 줄: 색 원(팔레트) · 이름 입력 · 사용 수 · 지우기. */
+function TagRow({
+  tag,
+  count,
+  onRename,
+  onRecolor,
+  onDelete,
+}: {
+  tag: TagDefinition;
+  count: number;
+  onRename: (name: string) => string | null;
+  onRecolor: (color: ConnectionColor) => void;
+  onDelete: () => void;
+}) {
+  const [draft, setDraft] = useState(tag.name);
+  const [error, setError] = useState("");
+  const [palette, setPalette] = useState(false);
+  const [syncedName, setSyncedName] = useState(tag.name);
+  // 실행 취소 등으로 이름이 바뀌면 입력칸도 따라간다.
+  if (syncedName !== tag.name) {
+    setSyncedName(tag.name);
+    setDraft(tag.name);
+    setError("");
+  }
+
+  function commit() {
+    if (draft === tag.name) {
+      setError("");
+      return;
+    }
+    const message = onRename(draft);
+    setError(message ?? "");
+    // 바뀐 이름은 위 동기화가 채운다. 정규화만 된 입력("#기획")은 원래 이름으로 돌린다.
+    if (!message) setDraft(tag.name);
+  }
+
+  return (
+    <li className="rounded-lg px-1 py-1 hover:bg-mist/60">
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          aria-label={`${tag.name} 태그 색 바꾸기`}
+          aria-expanded={palette}
+          onClick={() => setPalette((open) => !open)}
+          className="grid h-7 w-7 shrink-0 place-items-center rounded-full hover:bg-mist-deep focus-visible:outline-2 focus-visible:outline-moss-deep"
+        >
+          <span
+            aria-hidden="true"
+            className="h-3.5 w-3.5 rounded-full"
+            style={{ backgroundColor: connectionColor(tag.color).value }}
+          />
+        </button>
+        <input
+          type="text"
+          value={draft}
+          aria-label={`${tag.name} 태그 이름`}
+          aria-invalid={!!error}
+          spellCheck={false}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            setError("");
+          }}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+            if (event.key === "Enter") {
+              event.preventDefault();
+              commit();
+            } else if (event.key === "Escape" && draft !== tag.name) {
+              event.stopPropagation();
+              setDraft(tag.name);
+              setError("");
+            }
+          }}
+          className="min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1.5 py-1 text-sm text-bark outline-none hover:border-rule focus:border-moss-deep focus:bg-white focus:ring-2 focus:ring-moss/30 aria-invalid:border-red-400"
+        />
+        <span className="shrink-0 text-xs text-lichen tabular-nums">
+          노드 {count}개
+        </span>
+        <button
+          type="button"
+          onClick={onDelete}
+          aria-label={`${tag.name} 태그 지우기`}
+          className="shrink-0 rounded-md px-1.5 py-1 text-xs text-lichen hover:bg-red-50 hover:text-red-600 focus-visible:outline-2 focus-visible:outline-red-600"
+        >
+          지우기
+        </button>
+      </div>
+      {error && (
+        <p role="alert" className="mt-1 pl-9 text-xs leading-5 text-red-600">
+          {error}
+        </p>
+      )}
+      {palette && (
+        <fieldset
+          className="mt-1 ml-9 flex flex-wrap gap-1"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.stopPropagation();
+              setPalette(false);
+            }
+          }}
+        >
+          <legend className="sr-only">{tag.name} 태그 색</legend>
+          {CONNECTION_COLORS.map((color) => (
+            <label
+              key={color.key}
+              title={color.label}
+              className="grid h-7 w-7 cursor-pointer place-items-center rounded-full has-focus-visible:outline-2 has-focus-visible:outline-moss-deep"
+            >
+              <input
+                type="radio"
+                name={`menu-tag-color-${tag.id}`}
+                checked={tag.color === color.key}
+                onChange={() => {
+                  onRecolor(color.key);
+                  setPalette(false);
+                }}
+                aria-label={color.label}
+                className="sr-only"
+              />
+              <span
+                aria-hidden="true"
+                className={`h-5 w-5 rounded-full ${tag.color === color.key ? "ring-2 ring-bark ring-offset-2 ring-offset-white" : ""}`}
+                style={{ backgroundColor: color.value }}
+              />
+            </label>
+          ))}
+        </fieldset>
+      )}
+    </li>
   );
 }

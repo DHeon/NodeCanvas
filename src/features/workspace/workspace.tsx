@@ -30,10 +30,13 @@ import { normalizeLinkUrl } from "./link-embed";
 import { mergeTextStyle, type TextStyle } from "./text-style";
 import {
   attachTag,
+  countTagUsage,
   createOrFindTag,
+  deleteTag,
   detachTag,
   MAX_NODE_TAGS,
   recolorTag,
+  renameTag,
 } from "./tags";
 import ShortcutHelp from "./shortcut-help";
 import { useAutosave } from "./use-autosave";
@@ -1857,6 +1860,32 @@ export default function Workspace({
     });
   }
 
+  /** 오류 문구를 돌려주거나, 이름을 바꿨으면 null. */
+  function renameTagById(tagId: string, name: string): string | null {
+    if (gestureRef.current) return "드래그를 마친 뒤 다시 시도해주세요.";
+    const result = renameTag(rootDocument, tagId, name);
+    if ("error" in result) return result.error;
+    if (result.document === rootDocument) return null;
+    dispatchHistory({ type: "commit" });
+    dispatchHistory({
+      type: "change",
+      update: (root) => {
+        const next = renameTag(root, tagId, name);
+        return "error" in next ? root : next.document;
+      },
+    });
+    return null;
+  }
+
+  function deleteTagById(tagId: string) {
+    if (gestureRef.current) return;
+    dispatchHistory({ type: "commit" });
+    dispatchHistory({
+      type: "change",
+      update: (root) => deleteTag(root, tagId),
+    });
+  }
+
   function removeNodeImage(nodeId: string) {
     if (gestureRef.current) return;
     dispatchHistory({ type: "commit" });
@@ -2304,6 +2333,11 @@ export default function Workspace({
         canvas={workspace.canvas}
         onExport={exportDocument}
         onViewChange={changeView}
+        tags={rootDocument.tags ?? []}
+        tagUsage={countTagUsage(rootDocument)}
+        onTagRename={renameTagById}
+        onTagRecolor={recolorTagById}
+        onTagDelete={deleteTagById}
         onApply={(canvas) => {
           if (gestureRef.current) return "드래그를 마친 뒤 다시 시도해주세요.";
           const result = applyCanvasSettings(workspace, canvas);
