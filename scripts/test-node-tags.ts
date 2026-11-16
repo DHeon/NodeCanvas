@@ -8,6 +8,17 @@ import type {
   WorkspaceDocument,
 } from "../src/features/workspace/types";
 import { workspaceDocumentSchema } from "../src/features/workspace/workspace-schema";
+import {
+  attachTag,
+  countTagUsage,
+  createOrFindTag,
+  deleteTag,
+  detachTag,
+  normalizeTagName,
+  pickTagColor,
+  recolorTag,
+  renameTag,
+} from "../src/features/workspace/tags";
 
 function tag(
   name: string,
@@ -123,4 +134,146 @@ test("rejects limits", () => {
   const repeated = taggedDocument();
   repeated.nodes[0].tags = [repeated.tags![0].id, repeated.tags![0].id];
   assert.equal(valid(repeated), false);
+});
+
+function childOf(document: WorkspaceDocument) {
+  const canvas = document.nodes[1];
+  assert.equal(canvas.type, "canvas_node");
+  return canvas.type === "canvas_node" ? canvas : null!;
+}
+
+test("normalizeTagName trims and strips leading #", () => {
+  assert.equal(normalizeTagName(" #UI "), "UI");
+  assert.equal(normalizeTagName("회의"), "회의");
+  for (const bad of ["", "   ", "#", "a b", "a#b", "a".repeat(31)])
+    assert.equal(normalizeTagName(bad), null, JSON.stringify(bad));
+});
+
+test("createOrFindTag reuses case-insensitive match", () => {
+  const document = taggedDocument();
+  const result = createOrFindTag(document, "ui");
+  assert.ok(!("error" in result));
+  if ("error" in result) return;
+  assert.equal(result.document, document);
+  assert.equal(result.tag.id, document.tags![0].id);
+});
+
+test("createOrFindTag adds a new tag and stops at the project limit", () => {
+  const empty = createWorkspace();
+  const created = createOrFindTag(empty, "#아이디어");
+  assert.ok(!("error" in created));
+  if ("error" in created) return;
+  assert.equal(created.tag.name, "아이디어");
+  assert.match(created.tag.id, /^[0-9a-f-]{36}$/);
+  assert.deepEqual(created.document.tags, [created.tag]);
+  assert.equal(empty.tags, undefined);
+
+  const full = createWorkspace();
+  full.tags = Array.from({ length: 200 }, (_, index) => tag(`t${index}`));
+  assert.ok("error" in createOrFindTag(full, "하나더"));
+  assert.ok("error" in createOrFindTag(full, "두 단어"));
+});
+
+test("pickTagColor picks the least used color in palette order", () => {
+  assert.equal(pickTagColor(createWorkspace()), "lichen");
+  const one = createWorkspace();
+  one.tags = [tag("a", "lichen")];
+  assert.equal(pickTagColor(one), "moss");
+  const all = createWorkspace();
+  all.tags = (
+    [
+      "lichen",
+      "moss",
+      "teal",
+      "indigo",
+      "violet",
+      "rose",
+      "rust",
+      "ochre",
+    ] as const
+  ).map((color, index) => tag(`c${index}`, color));
+  assert.equal(pickTagColor(all), "lichen");
+});
+
+test("attachTag skips full nodes and reports them", () => {
+  const twenty = Array.from({ length: 21 }, (_, index) => tag(`t${index}`));
+  const document = createWorkspace();
+  document.tags = twenty;
+  const empty = textNode();
+  const full = textNode(twenty.slice(0, 20).map((item) => item.id));
+  document.nodes = [empty, full];
+  const extra = twenty[20].id;
+
+  const partial = attachTag(document, [], [empty.id, full.id], extra);
+  assert.equal(partial.skipped, 1);
+  assert.deepEqual(partial.document.nodes[0].tags, [extra]);
+  assert.equal(partial.document.nodes[1].tags!.length, 20);
+
+  const none = attachTag(document, [], [full.id], extra);
+  assert.equal(none.skipped, 1);
+  assert.equal(none.document, document);
+
+  // 이미 붙은 노드는 건너뛰지만 가득 찬 것으로 세지 않는다.
+  const again = attachTag(partial.document, [], [empty.id], extra);
+  assert.equal(again.skipped, 0);
+  assert.equal(again.document, partial.document);
+});
+
+test("attachTag and detachTag touch only the given canvas path", () => {
+  const document = taggedDocument();
+  const canvas = childOf(document);
+  const inner = canvas.document.nodes[0];
+  const ui = document.tags![0].id;
+
+  const attached = attachTag(document, [canvas.id], [inner.id], ui);
+  const innerAfter = childOf(attached.document).document.nodes[0];
+  assert.deepEqual(innerAfter.tags, [document.tags![1].id, ui]);
+  assert.deepEqual(attached.document.nodes[0].tags, document.nodes[0].tags);
+
+  const detached = detachTag(attached.document, [canvas.id], [inner.id], ui);
+  const meeting = document.tags![1].id;
+  const cleared = detachTag(detached, [canvas.id], [inner.id], meeting);
+  const clearedNode = childOf(cleared).document.nodes[0];
+  assert.equal("tags" in clearedNode, false);
+  assert.ok(workspaceDocumentSchema.safeParse(cleared).success);
+});
+
+test("renameTag and recolorTag update the registry only", () => {
+  const document = taggedDocument();
+  const [ui, meeting] = document.tags!;
+  assert.ok("error" in renameTag(document, ui.id, "회의"));
+  assert.ok("error" in renameTag(document, ui.id, "두 단어"));
+  const renamed = renameTag(document, ui.id, "#화면");
+  assert.ok(!("error" in renamed));
+  if ("error" in renamed) return;
+  assert.equal(renamed.document.tags![0].name, "화면");
+  assert.equal(renamed.document.nodes, document.nodes);
+
+  const recolored = recolorTag(document, meeting.id, "teal");
+  assert.equal(recolored.tags![1].color, "teal");
+  assert.equal(recolorTag(document, meeting.id, "rose"), document);
+});
+
+test("deleteTag removes ids at every depth", () => {
+  const document = taggedDocument();
+  const meeting = document.tags![1].id;
+  const deleted = deleteTag(document, meeting);
+  assert.deepEqual(
+    deleted.tags!.map((item) => item.name),
+    ["UI"],
+  );
+  assert.deepEqual(deleted.nodes[0].tags, [document.tags![0].id]);
+  assert.equal("tags" in childOf(deleted).document.nodes[0], false);
+  assert.ok(workspaceDocumentSchema.safeParse(deleted).success);
+
+  const last = deleteTag(deleteTag(document, meeting), document.tags![0].id);
+  assert.equal("tags" in last, false);
+  assert.ok(workspaceDocumentSchema.safeParse(last).success);
+});
+
+test("countTagUsage sums nodes at every depth", () => {
+  const document = taggedDocument();
+  const usage = countTagUsage(document);
+  assert.equal(usage.get(document.tags![0].id), 1);
+  assert.equal(usage.get(document.tags![1].id), 2);
 });
