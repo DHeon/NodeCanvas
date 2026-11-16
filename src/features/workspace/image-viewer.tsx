@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import { CloseIcon } from "./icons";
+import { actualSizeButton } from "./image-viewer-scale";
 import type { ImageNode, ImageReference } from "./types";
 
 type ImageViewerProps = {
@@ -25,8 +26,29 @@ export default function ImageViewer({
 }: ImageViewerProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [actualSize, setActualSize] = useState(false);
+  // 화면에 맞춰 볼 때의 배율(그려진 폭 ÷ 원본 폭). 1이면 이미 원본 크기다.
+  const [fitScale, setFitScale] = useState<number | null>(null);
+  const imageRef = useRef<HTMLImageElement>(null);
   const { image } = node;
   const title = node.title.trim() || "이미지";
+  const sizeButton = actualSizeButton(fitScale, actualSize);
+  const toggleActualSize = () => {
+    if (!sizeButton.disabled) setActualSize((value) => !value);
+  };
+
+  // 화면 크기가 바뀌면 맞춤 배율도 바뀌므로 그려진 크기를 계속 잰다.
+  useEffect(() => {
+    const element = imageRef.current;
+    if (!element || actualSize) return;
+    const measure = () => {
+      if (element.clientWidth > 0)
+        setFitScale(element.clientWidth / image.width);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [actualSize, image.width]);
 
   const previousFocusRef = useRef<Element | null>(null);
 
@@ -70,11 +92,14 @@ export default function ImageViewer({
           </div>
           <button
             type="button"
-            onClick={() => setActualSize((value) => !value)}
+            onClick={toggleActualSize}
             aria-pressed={actualSize}
-            className={toolButton}
+            // 눌러도 이유를 볼 수 있도록 disabled 대신 aria-disabled를 쓴다.
+            aria-disabled={sizeButton.disabled || undefined}
+            title={sizeButton.title}
+            className={`${toolButton} tabular-nums aria-disabled:cursor-not-allowed aria-disabled:opacity-40 aria-disabled:hover:bg-transparent`}
           >
-            {actualSize ? "화면에 맞추기" : "원본 크기"}
+            {sizeButton.label}
           </button>
           <button
             type="button"
@@ -90,8 +115,9 @@ export default function ImageViewer({
           </button>
         </header>
         {/* 그림 바깥(어두운 여백)을 누르면 닫힌다. */}
+        {/* 자동 여백(m-auto)으로 가운데에 둔다. 화면보다 크면 여백이 0이 되어 위·왼쪽부터 스크롤된다. */}
         <div
-          className={`min-h-0 flex-1 overflow-auto overscroll-contain px-4 pb-6 sm:px-6 ${actualSize ? "" : "flex items-center justify-center"}`}
+          className="flex min-h-0 flex-1 overflow-auto overscroll-contain px-4 pb-6 sm:px-6"
           onClick={(event) => {
             if (event.target === event.currentTarget)
               dialogRef.current?.close();
@@ -104,11 +130,17 @@ export default function ImageViewer({
             height={image.height}
             unoptimized
             draggable={false}
-            onDoubleClick={() => setActualSize((value) => !value)}
+            ref={imageRef}
+            onLoad={() => {
+              const element = imageRef.current;
+              if (element && !actualSize && element.clientWidth > 0)
+                setFitScale(element.clientWidth / image.width);
+            }}
+            onDoubleClick={toggleActualSize}
             className={
               actualSize
-                ? "mx-auto block h-auto w-auto max-w-none cursor-zoom-out"
-                : "max-h-full w-auto max-w-full cursor-zoom-in rounded-lg object-contain shadow-float"
+                ? "m-auto block h-auto w-auto max-w-none shrink-0 cursor-zoom-out"
+                : `m-auto max-h-full w-auto max-w-full rounded-lg object-contain shadow-float ${sizeButton.disabled ? "" : "cursor-zoom-in"}`
             }
           />
         </div>

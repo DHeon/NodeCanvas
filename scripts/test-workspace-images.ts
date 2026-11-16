@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { test } from "node:test";
+import { actualSizeButton } from "../src/features/workspace/image-viewer-scale";
 import sharp from "sharp";
 import { createWorkspace } from "../src/features/workspace/create-workspace";
 import { workspaceDocumentSchema } from "../src/features/workspace/workspace-schema";
@@ -266,4 +267,32 @@ test("이미지 클라이언트는 바이너리 파일만 전송하고 응답 �
   } finally {
     globalThis.fetch = original;
   }
+});
+
+test("크게 보기의 원본 크기 버튼: 줄여 볼 때만 쓸 수 있고 지금 배율을 보여준다", () => {
+  // 아직 재지 못했으면 평소 문구로 쓸 수 있게 둔다.
+  assert.deepEqual(actualSizeButton(null, false), {
+    label: "원본 크기",
+    disabled: false,
+    title: "1:1 픽셀로 보기",
+  });
+  // 화면에 맞추느라 45%로 줄여 보고 있으면 배율을 함께 보여준다.
+  assert.deepEqual(actualSizeButton(0.452, false), {
+    label: "원본 크기 · 지금 45%",
+    disabled: false,
+    title: "1:1 픽셀로 보기",
+  });
+  // 이미지가 화면보다 작아 이미 원본 크기로 보이면 막는다.
+  assert.deepEqual(actualSizeButton(1, false), {
+    label: "원본 크기",
+    disabled: true,
+    title: "이미 원본 크기로 보고 있어요",
+  });
+  assert.equal(actualSizeButton(0.9995, false).disabled, true);
+  // 원본 크기로 보는 중에는 돌아가기 버튼이다.
+  assert.deepEqual(actualSizeButton(0.452, true), {
+    label: "화면에 맞추기",
+    disabled: false,
+    title: "화면에 맞춰 보기",
+  });
 });
