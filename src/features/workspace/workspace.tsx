@@ -21,7 +21,13 @@ import type {
 import TextNodeView from "./text-node-view";
 import ImageNodeView from "./image-node-view";
 import CanvasNodeView from "./canvas-node-view";
-import { ArrowLeftIcon, MinusIcon, PlusIcon, SearchIcon } from "./icons";
+import {
+  ArrowLeftIcon,
+  FitIcon,
+  MinusIcon,
+  PlusIcon,
+  SearchIcon,
+} from "./icons";
 import {
   countNestedMatches,
   hasSearchTerms,
@@ -623,11 +629,11 @@ export default function Workspace({
     let lastSize = viewport.getBoundingClientRect();
     const observer = new ResizeObserver(() => {
       const size = viewport.getBoundingClientRect();
-      // 관찰을 시작할 때 오는 첫 알림으로 복원한 화면을 덮어쓰지 않는다.
-      if (size.width === lastSize.width && size.height === lastSize.height)
-        return;
+      // 크기가 바뀌어도(속성 패널 열고 닫기, 창 크기 조절) 보던 화면은 그대로 둔다.
+      // 처음 그려지기 전(크기 0)에 맞춘 화면만 실제 크기로 다시 맞춘다.
+      const wasEmpty = lastSize.width === 0 || lastSize.height === 0;
       lastSize = size;
-      fitCanvas();
+      if (wasEmpty && size.width > 0 && size.height > 0) fitCanvas();
     });
 
     observer.observe(viewport);
@@ -2806,6 +2812,17 @@ export default function Workspace({
               />
             )}
           </div>
+          <button
+            type="button"
+            onClick={fitCanvas}
+            aria-label="화면 맞춤"
+            title="화면 맞춤 (0)"
+            aria-keyshortcuts="0"
+            onPointerDown={(event) => event.stopPropagation()}
+            className="absolute bottom-4 left-4 z-40 grid h-10 w-10 place-items-center rounded-xl border border-rule bg-white/95 text-bark-soft shadow-card backdrop-blur hover:bg-mist focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-moss-deep active:bg-mist-deep"
+          >
+            <FitIcon size={20} />
+          </button>
           {connectMenu && (
             <ConnectNodeMenu
               left={connectMenu.left}

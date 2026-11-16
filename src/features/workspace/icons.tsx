@@ -117,6 +117,15 @@ export function GripIcon(props: IconProps) {
   );
 }
 
+export function FitIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4 9V6a2 2 0 0 1 2-2h3M15 4h3a2 2 0 0 1 2 2v3M20 15v3a2 2 0 0 1-2 2h-3M9 20H6a2 2 0 0 1-2-2v-3" />
+      <rect x="9" y="9" width="6" height="6" rx="1" />
+    </Icon>
+  );
+}
+
 export function ExpandIcon(props: IconProps) {
   return (
     <Icon {...props}>
