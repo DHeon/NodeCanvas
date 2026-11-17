@@ -3055,6 +3055,12 @@ export default function Workspace({
           onTagAdd={addTagToNodes}
           onTagRemove={removeTagFromNodes}
           onTagRecolor={recolorTagById}
+          onRoleChange={(nodeIds, role) =>
+            applyDocumentChange((root, path) =>
+              setRole(root, path, nodeIds, role),
+            )
+          }
+          onTodoDone={toggleTodoNode}
           onReturnToCanvas={() =>
             viewportRef.current?.focus({ preventScroll: true })
           }

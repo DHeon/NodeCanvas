@@ -9,6 +9,7 @@ import type {
 import { ChevronLeftIcon, ChevronRightIcon } from "./icons";
 import { nodeDisplayName } from "./workspace-tree";
 import TagInput from "./tag-input";
+import { canHaveRole } from "./roles";
 import TextStyleSection from "./text-style-section";
 import { normalizeLinkUrl, parseYouTube } from "./link-embed";
 
@@ -142,6 +143,86 @@ function ConnectionColorPicker({
   );
 }
 
+/** 역할 고르기. 체크리스트는 역할을 가질 수 없어 빼고 판단한다. */
+function RoleField({
+  nodes,
+  onRoleChange,
+  onTodoDone,
+}: {
+  nodes: WorkspaceNode[];
+  onRoleChange: (nodeIds: string[], role: "todo" | null) => void;
+  onTodoDone: (nodeId: string, done: boolean) => void;
+}) {
+  const candidates = nodes.filter(canHaveRole);
+  if (candidates.length === 0) return null;
+  const todoCount = candidates.filter(
+    (node) => node.role?.kind === "todo",
+  ).length;
+  const current =
+    todoCount === candidates.length
+      ? "todo"
+      : todoCount === 0
+        ? "none"
+        : "mixed";
+  const ids = candidates.map((node) => node.id);
+  // "완료"는 노드를 하나만 골랐을 때만 보인다(체크리스트가 섞인 여러 선택 제외).
+  const single = nodes.length === 1 ? candidates[0] : null;
+  return (
+    <section className={sectionClass}>
+      <fieldset>
+        <legend className={`${headingClass} mb-3`}>
+          역할
+          {current === "mixed" && (
+            <span className="ml-1.5 font-normal text-lichen">· 여러 가지</span>
+          )}
+        </legend>
+        <div className="grid grid-cols-2 rounded-lg border border-rule bg-white p-0.5">
+          {(
+            [
+              ["none", "없음"],
+              ["todo", "할 일"],
+            ] as const
+          ).map(([value, label]) => {
+            const active = current === value;
+            return (
+              <label
+                key={value}
+                className={`flex cursor-pointer items-center justify-center rounded-md px-3 py-1.5 text-sm has-focus-visible:outline-2 has-focus-visible:outline-moss-deep ${active ? "bg-ink text-white" : "text-bark-soft hover:bg-mist"}`}
+              >
+                <input
+                  type="radio"
+                  name={`node-role-${ids.join("-")}`}
+                  value={value}
+                  checked={active}
+                  onChange={() =>
+                    onRoleChange(ids, value === "todo" ? "todo" : null)
+                  }
+                  className="sr-only"
+                />
+                {label}
+              </label>
+            );
+          })}
+        </div>
+      </fieldset>
+      {single?.role?.kind === "todo" && (
+        <label className="flex items-center gap-2 text-sm text-bark-soft">
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-moss-deep"
+            checked={single.role.done}
+            onChange={(event) => onTodoDone(single.id, event.target.checked)}
+          />
+          완료
+        </label>
+      )}
+      <p className={hintClass}>
+        할 일 노드는 체크리스트 노드에 연결하면 목록에 들어가요.
+      </p>
+    </section>
+  );
+}
+
 const inputClass =
   "w-full min-w-0 rounded-lg border border-rule bg-white px-2.5 py-2 text-sm text-bark tabular-nums outline-none focus:border-moss-deep focus:ring-2 focus:ring-moss/30";
 const sectionClass = "space-y-3 border-t border-rule-soft pt-5";
@@ -239,6 +320,8 @@ type PropertiesProps = {
   onTagAdd: (nodeIds: string[], name: string) => void;
   onTagRemove: (nodeIds: string[], tagId: string) => void;
   onTagRecolor: (tagId: string, color: ConnectionColor) => void;
+  onRoleChange: (nodeIds: string[], role: "todo" | null) => void;
+  onTodoDone: (nodeId: string, done: boolean) => void;
 };
 
 /** 선택 노드들의 태그 합집합. 일부에만 있으면 partial. */
@@ -284,6 +367,8 @@ export default function WorkspaceProperties({
   onTagAdd,
   onTagRemove,
   onTagRecolor,
+  onRoleChange,
+  onTodoDone,
 }: PropertiesProps) {
   const selectedIds = selectedNodes.map((item) => item.id);
   const tagEditor = selectedNodes.length > 0 && (
@@ -332,7 +417,9 @@ export default function WorkspaceProperties({
                     ? "캔버스 노드"
                     : node.type === "link_node"
                       ? "링크 노드"
-                      : "이미지 노드"
+                      : node.type === "checklist_node"
+                        ? "체크리스트 노드"
+                        : "이미지 노드"
                 : selectedConnection
                   ? "연결선"
                   : "노드 설정"}
@@ -377,6 +464,13 @@ export default function WorkspaceProperties({
                     </p>
                   </section>
                 )}
+                {selectionCount > 1 && (
+                  <RoleField
+                    nodes={selectedNodes}
+                    onRoleChange={onRoleChange}
+                    onTodoDone={onTodoDone}
+                  />
+                )}
               </>
             ) : (
               <>
@@ -413,6 +507,11 @@ export default function WorkspaceProperties({
                   <h3 className={headingClass}>태그</h3>
                   {tagEditor}
                 </section>
+                <RoleField
+                  nodes={[node]}
+                  onRoleChange={onRoleChange}
+                  onTodoDone={onTodoDone}
+                />
                 <section className={sectionClass}>
                   <h3 className={headingClass}>위치 · 크기</h3>
                   <div className="grid grid-cols-2 gap-3">
@@ -521,6 +620,11 @@ export default function WorkspaceProperties({
                       있어요.
                     </p>
                   </section>
+                ) : node.type === "checklist_node" ? (
+                  <p className="border-t border-rule-soft pt-5 text-xs leading-5 break-keep text-lichen">
+                    항목은 노드 안에서 추가하고 체크해요. 할 일 역할을 가진
+                    노드를 연결하면 목록에 함께 들어가요.
+                  </p>
                 ) : (
                   <p className="border-t border-rule-soft pt-5 text-xs leading-5 break-keep text-lichen">
                     노드의 열기 버튼으로 하위 작업 공간에 들어가요. Alt+↑로 다시
