@@ -35,6 +35,7 @@ import {
   type SearchResult,
 } from "./search";
 import SearchPanel from "./search-panel";
+import { setTodoDone } from "./roles";
 import ConnectNodeMenu from "./connect-node-menu";
 import ConflictPanel from "./conflict-panel";
 import ImageViewer from "./image-viewer";
@@ -1870,6 +1871,17 @@ export default function Workspace({
     searchInputRef.current?.select();
   }
 
+  /** 할 일 노드의 완료 상태를 바꾼다(실행 취소 한 단계). 체크리스트 목록과 같은 상태다. */
+  function toggleTodoNode(nodeId: string, done: boolean) {
+    if (gestureRef.current) return;
+    const path = canvasPath.slice(0, activeDepth);
+    dispatchHistory({ type: "commit" });
+    dispatchHistory({
+      type: "change",
+      update: (root) => setTodoDone(root, path, nodeId, done),
+    });
+  }
+
   /** 태그 미리보기에서 고른 태그로 검색을 바로 연다. 그 태그 노드만 또렷하게 남는다. */
   function openTagLens(tag: TagDefinition) {
     // 끝 공백: 검색칸이 태그 후보 칩을 다시 띄우지 않게 한다. 디바운스 없이 바로 반영한다.
@@ -2781,6 +2793,7 @@ export default function Workspace({
                   : ("none" as const),
                 highlighted: highlightedNodeId === node.id,
                 onTagLens: openTagLens,
+                onToggleTodo: toggleTodoNode,
               };
               return node.type === "text_node" ? (
                 <TextNodeView key={node.id} {...frame} node={node} />

@@ -54,6 +54,8 @@ export type NodeFrameProps = {
   highlighted?: boolean;
   /** 태그 미리보기에서 태그를 누르면 그 태그 노드를 모아 본다. */
   onTagLens?: (tag: TagDefinition) => void;
+  /** 할 일 노드의 체크 버튼. */
+  onToggleTodo?: (nodeId: string, done: boolean) => void;
 };
 
 export default function NodeFrame({
@@ -74,8 +76,10 @@ export default function NodeFrame({
   searchState = "none",
   highlighted = false,
   onTagLens,
+  onToggleTodo,
 }: NodeFrameProps) {
   const tagNames = tags.map((tag) => tag.name).join(", ");
+  const todo = node.role?.kind === "todo" ? node.role : null;
   const label =
     node.type === "canvas_node"
       ? "캔버스"
@@ -105,7 +109,7 @@ export default function NodeFrame({
   return (
     <article
       tabIndex={-1}
-      aria-label={`${label} 노드: ${node.title.trim() || "제목 없음"}${tagNames ? `, 태그: ${tagNames}` : ""}${selected ? ", 선택됨" : ""}`}
+      aria-label={`${label} 노드: ${node.title.trim() || "제목 없음"}${todo ? (todo.done ? ", 할 일 완료" : ", 할 일") : ""}${tagNames ? `, 태그: ${tagNames}` : ""}${selected ? ", 선택됨" : ""}`}
       data-node-id={node.id}
       data-search-highlight={highlighted ? "" : undefined}
       data-node-type={node.type}
@@ -166,6 +170,35 @@ export default function NodeFrame({
           }}
           className="focus-visible:outline-inset flex h-12 shrink-0 cursor-grab touch-none items-center border-b border-rule-soft bg-card-head px-4 select-none focus-visible:outline-2 focus-visible:outline-moss-deep active:cursor-grabbing"
         >
+          {todo && (
+            <button
+              type="button"
+              data-todo-check=""
+              aria-pressed={todo.done}
+              aria-label={todo.done ? "할 일 완료 취소" : "할 일 완료로 표시"}
+              // 빈 title로 머리의 "드래그해서 이동" 툴팁을 물려받지 않는다.
+              title=""
+              // 체크 버튼을 눌러도 노드를 끌거나 제목 편집으로 넘어가지 않는다.
+              onPointerDown={(event) => event.stopPropagation()}
+              onDoubleClick={(event) => event.stopPropagation()}
+              onClick={() => onToggleTodo?.(node.id, !todo.done)}
+              className={`mr-2 grid h-[18px] w-[18px] shrink-0 cursor-pointer place-items-center rounded-full border-[1.5px] transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-moss-deep motion-reduce:transition-none ${todo.done ? "border-moss-deep bg-moss-deep text-white" : "border-sage-hover bg-white text-transparent hover:border-moss-deep hover:text-moss-deep/40"}`}
+            >
+              <svg
+                viewBox="0 0 16 16"
+                width="11"
+                height="11"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="m3.5 8.5 3 3 6-7" />
+              </svg>
+            </button>
+          )}
           {editingTitle ? (
             <input
               ref={titleInput}
@@ -202,7 +235,7 @@ export default function NodeFrame({
             />
           ) : (
             <span
-              className={`min-w-0 flex-1 truncate text-sm font-medium ${node.title ? "" : "text-lichen"}`}
+              className={`min-w-0 flex-1 truncate text-sm font-medium ${node.title && !todo?.done ? "" : "text-lichen"} ${todo?.done ? "line-through decoration-lichen" : ""}`}
             >
               {node.title || placeholder}
             </span>

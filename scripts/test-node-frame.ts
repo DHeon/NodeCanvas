@@ -128,3 +128,36 @@ test("태그 점 묶음은 짧게 누를 때만 미리보기를 연다(꾹 누�
   // 키보드로 누른 클릭은 누른 시간이 없으므로 연다.
   assert.equal(isQuickPress(null), true);
 });
+
+const todoNode = (done: boolean): NodeFrameProps["node"] => ({
+  id: "node",
+  title: "회의 메모",
+  position: { x: 0, y: 0 },
+  width: 320,
+  height: 220,
+  type: "text_node",
+  text: "",
+  role: { kind: "todo", done },
+});
+
+test("todo node shows a check button", () => {
+  const html = renderFrame({ node: todoNode(false) });
+  const button = html.match(/<button[^>]*data-todo-check=""[^>]*>/)?.[0] ?? "";
+  assert.match(button, /aria-pressed="false"/);
+  assert.match(button, /aria-label="할 일 완료로 표시"/);
+  assert.match(html, /aria-label="텍스트 노드: 회의 메모, 할 일"/);
+  assert.doesNotMatch(html, /line-through/);
+});
+
+test("done todo is struck through", () => {
+  const html = renderFrame({ node: todoNode(true) });
+  const button = html.match(/<button[^>]*data-todo-check=""[^>]*>/)?.[0] ?? "";
+  assert.match(button, /aria-pressed="true"/);
+  assert.match(button, /aria-label="할 일 완료 취소"/);
+  assert.match(html, /aria-label="텍스트 노드: 회의 메모, 할 일 완료"/);
+  assert.match(html, /line-through/);
+});
+
+test("no role, no check button", () => {
+  assert.doesNotMatch(renderFrame({}), /data-todo-check/);
+});
