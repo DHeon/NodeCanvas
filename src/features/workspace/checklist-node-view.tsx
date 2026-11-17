@@ -1,9 +1,15 @@
 "use client";
 
-import { useState, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import type { ChecklistView } from "./checklist";
 import { MAX_CHECKLIST_ITEM_LENGTH } from "./checklist";
 import { ArrowUpRightIcon, CloseIcon } from "./icons";
+import { focusAfterRemoval } from "./keyboard-targets";
 import NodeFrame, { type NodeFrameProps } from "./node-frame";
 import type { ChecklistNode } from "./types";
 import { nodeDisplayName } from "./workspace-tree";
@@ -39,6 +45,7 @@ function CheckBox({
     <button
       type="button"
       role="checkbox"
+      data-keyboard-control=""
       aria-checked={checked}
       aria-label={label}
       onPointerDown={keepPointer}
@@ -80,11 +87,41 @@ export default function ChecklistNodeView({
   );
   const percent = view.total ? Math.round((view.done / view.total) * 100) : 0;
   const allDone = view.total > 0 && view.done === view.total;
+  const itemIds = view.entries.flatMap((entry) =>
+    entry.kind === "item" ? [entry.item.id] : [],
+  );
+  const listRef = useRef<HTMLUListElement>(null);
+  const addRef = useRef<HTMLInputElement>(null);
+  // 고치기·지우기로 포커스가 있던 요소가 사라지면 이웃 항목이나 추가 입력칸으로 옮긴다.
+  // 그래야 Ctrl+Z 같은 캔버스 단축키가 계속 들어온다.
+  const pendingFocusRef = useRef<string | null>(null);
+  useEffect(() => {
+    const target = pendingFocusRef.current;
+    if (target === null) return;
+    pendingFocusRef.current = null;
+    const element =
+      target === "add"
+        ? addRef.current
+        : listRef.current?.querySelector<HTMLElement>(
+            `[data-item-text="${target}"]`,
+          );
+    (element ?? addRef.current)?.focus({ preventScroll: true });
+  });
 
-  function commitEdit() {
+  /** 키보드로 적용하면 포커스를 그 항목(지워졌으면 이웃)으로 돌린다. 바깥을 눌러 적용하면 그대로 둔다. */
+  function commitEdit(fromKeyboard: boolean) {
     if (!editing) return;
+    if (fromKeyboard)
+      pendingFocusRef.current = editing.text.trim()
+        ? editing.id
+        : (focusAfterRemoval(itemIds, editing.id) ?? "add");
     onEditItem(editing.id, { text: editing.text });
     setEditing(null);
+  }
+
+  function removeItem(itemId: string) {
+    pendingFocusRef.current = focusAfterRemoval(itemIds, itemId) ?? "add";
+    onRemoveItem(itemId);
   }
 
   return (
@@ -126,6 +163,7 @@ export default function ChecklistNodeView({
 
         {view.entries.length > 0 && (
           <ul
+            ref={listRef}
             data-scroll-region=""
             aria-label="체크리스트 항목"
             className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-1.5"
@@ -147,6 +185,7 @@ export default function ChecklistNodeView({
                       type="button"
                       onPointerDown={keepPointer}
                       onClick={() => onFocusNode(entry.node.id)}
+                      data-keyboard-control=""
                       title=""
                       aria-label={`${name} 노드로 이동`}
                       className={`flex min-w-0 flex-1 items-center gap-1 rounded text-left text-sm focus-visible:outline-2 focus-visible:outline-moss-deep ${entry.done ? "text-lichen line-through decoration-lichen" : "text-bark"}`}
@@ -182,7 +221,7 @@ export default function ChecklistNodeView({
                       onChange={(event) =>
                         setEditing({ id: item.id, text: event.target.value })
                       }
-                      onBlur={commitEdit}
+                      onBlur={() => commitEdit(false)}
                       onKeyDown={(event) => {
                         if (
                           event.nativeEvent.isComposing ||
@@ -191,10 +230,11 @@ export default function ChecklistNodeView({
                           return;
                         if (event.key === "Enter") {
                           event.preventDefault();
-                          commitEdit();
+                          commitEdit(true);
                         } else if (event.key === "Escape") {
                           event.preventDefault();
                           event.stopPropagation();
+                          pendingFocusRef.current = item.id;
                           setEditing(null);
                         }
                       }}
@@ -207,6 +247,8 @@ export default function ChecklistNodeView({
                       onClick={() =>
                         setEditing({ id: item.id, text: item.text })
                       }
+                      data-item-text={item.id}
+                      data-keyboard-control=""
                       aria-label={`${item.text} 고치기`}
                       className={`min-w-0 flex-1 truncate rounded text-left text-sm focus-visible:outline-2 focus-visible:outline-moss-deep ${item.done ? "text-lichen line-through decoration-lichen" : "text-bark"}`}
                     >
@@ -217,7 +259,8 @@ export default function ChecklistNodeView({
                     <button
                       type="button"
                       onPointerDown={keepPointer}
-                      onClick={() => onRemoveItem(item.id)}
+                      onClick={() => removeItem(item.id)}
+                      data-keyboard-control=""
                       aria-label={`${item.text} 지우기`}
                       className="grid h-5 w-5 shrink-0 place-items-center rounded text-lichen opacity-0 group-hover/row:opacity-100 hover:bg-red-50 hover:text-red-600 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-red-600"
                     >
@@ -232,6 +275,7 @@ export default function ChecklistNodeView({
 
         <div className="mt-auto px-3 pt-1 pb-2.5">
           <input
+            ref={addRef}
             value={draft}
             maxLength={MAX_CHECKLIST_ITEM_LENGTH}
             placeholder="+ 항목 추가"
@@ -262,6 +306,7 @@ export default function ChecklistNodeView({
               type="button"
               onPointerDown={keepPointer}
               onClick={() => onMakeTodos(view.unassignedNodeIds)}
+              data-keyboard-control=""
               className="shrink-0 rounded font-medium text-moss-deep hover:underline focus-visible:outline-2 focus-visible:outline-moss-deep"
             >
               할 일로 만들기

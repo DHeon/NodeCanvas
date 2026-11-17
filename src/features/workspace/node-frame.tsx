@@ -7,6 +7,7 @@ import {
 } from "react";
 import { CONNECTION_SIDES } from "./connections";
 import TagPeek from "./tag-peek";
+import { startsTitleEdit } from "./keyboard-targets";
 import type {
   TagDefinition,
   ConnectionSide,
@@ -159,10 +160,7 @@ export default function NodeFrame({
             if (event.target === event.currentTarget) onSelect(node.id);
           }}
           onKeyDown={(event) => {
-            if (
-              !editingTitle &&
-              (event.key === "Enter" || event.key === "F2")
-            ) {
+            if (startsTitleEdit(event, editingTitle)) {
               event.preventDefault();
               event.stopPropagation();
               editTitle();
@@ -174,6 +172,7 @@ export default function NodeFrame({
             <button
               type="button"
               data-todo-check=""
+              data-keyboard-control=""
               aria-pressed={todo.done}
               aria-label={todo.done ? "할 일 완료 취소" : "할 일 완료로 표시"}
               // 빈 title로 머리의 "드래그해서 이동" 툴팁을 물려받지 않는다.

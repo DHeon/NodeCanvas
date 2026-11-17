@@ -36,6 +36,7 @@ import {
 } from "./search";
 import SearchPanel from "./search-panel";
 import { roleForConnectedNode, setRole, setTodoDone } from "./roles";
+import { spaceBelongsToControl, wheelStaysInRegion } from "./keyboard-targets";
 import {
   addChecklistItem,
   buildChecklist,
@@ -667,14 +668,8 @@ export default function Workspace({
       if (!viewport) return;
 
       // 입력 영역에서는 텍스트 스크롤을 사용
-      if (
-        event.target instanceof Element &&
-        event.target.closest(
-          "textarea, input, [contenteditable='true'], [data-search-panel], [data-scroll-region]",
-        )
-      ) {
+      if (event.target instanceof Element && wheelStaysInRegion(event.target))
         return;
-      }
 
       event.preventDefault();
 
@@ -760,10 +755,10 @@ export default function Workspace({
     function down(event: KeyboardEvent) {
       if (event.code !== "Space" || event.repeat || isTyping(event.target))
         return;
+      // 노드 밖 버튼과 노드 안 키보드 컨트롤(체크 상자 등)은 스페이스를 직접 받는다.
       if (
         event.target instanceof Element &&
-        event.target.closest("button, a, [role='button']") &&
-        !event.target.closest("[data-node-id]")
+        spaceBelongsToControl(event.target)
       )
         return;
       event.preventDefault();
