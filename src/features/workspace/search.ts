@@ -43,6 +43,8 @@ function searchableText(node: WorkspaceNode, tagNames: string[]) {
   if (node.type === "text_node") fields.push(node.text);
   if (node.type === "link_node")
     fields.push(node.url, node.preview?.title ?? "");
+  if (node.type === "checklist_node")
+    fields.push(...node.items.map((item) => item.text));
   // 필드 경계를 넘는 우연한 일치를 막으려고 줄바꿈으로 잇는다.
   return fields.join("\n").toLowerCase();
 }

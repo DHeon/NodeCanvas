@@ -218,3 +218,17 @@ test("results recompute after node removal", () => {
   const removed = { ...root, nodes: root.nodes.filter((n) => n !== meeting) };
   assert.equal(searchWorkspace(removed, "회의", []).results.length, 0);
 });
+
+test("checklist item text is searchable", () => {
+  const checklist: WorkspaceNode = {
+    ...base("이번 주"),
+    type: "checklist_node",
+    items: [{ id: randomUUID(), text: "우유 사기", done: false }],
+  };
+  const root = createWorkspace();
+  root.nodes = [checklist];
+  assert.deepEqual(
+    searchWorkspace(root, "우유", []).results.map((result) => result.node.id),
+    [checklist.id],
+  );
+});
