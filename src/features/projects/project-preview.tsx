@@ -47,6 +47,7 @@ const fill: Record<string, string> = {
   image_node: "var(--color-ochre-wash)",
   canvas_node: "var(--color-moss-wash)",
   link_node: "var(--color-mist)",
+  checklist_node: "var(--color-moss-wash)",
 };
 
 export default function ProjectPreview({ nodes }: { nodes: PreviewNode[] }) {

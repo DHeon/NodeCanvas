@@ -54,6 +54,7 @@ export const nodeTypeLabel = {
   image_node: "이미지",
   canvas_node: "캔버스",
   link_node: "링크",
+  checklist_node: "체크리스트",
 } as const;
 
 /** 제목이 없는 노드도 목록·스크린리더에서 구분되게 이름을 붙인다. */

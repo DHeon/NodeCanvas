@@ -25,7 +25,12 @@ export type NodeBase = {
   title: string;
   // 루트 문서 tags 목록의 TagDefinition.id. 비면 필드를 생략한다.
   tags?: string[];
+  /** 노드의 역할. 없으면 역할 없음. 체크리스트 노드에는 붙지 않는다. */
+  role?: NodeRole;
 };
+
+/** 역할은 나중에 종류가 늘어나도록 kind로 구분한다. */
+export type NodeRole = { kind: "todo"; done: boolean };
 
 /** 프로젝트 공용 태그. 루트 문서에만 목록이 있고 하위 캔버스가 함께 쓴다. */
 export type TagDefinition = {
@@ -67,7 +72,17 @@ export type LinkNode = NodeBase & {
   preview?: LinkPreview;
 };
 
-export type WorkspaceNode = TextNode | ImageNode | CanvasNode | LinkNode;
+/** 체크리스트 안에서 직접 쓴 항목. */
+export type ChecklistItem = { id: string; text: string; done: boolean };
+
+/** 연결된 할 일과 직접 쓴 항목을 모아 진행률을 보여주는 노드. */
+export type ChecklistNode = NodeBase & {
+  type: "checklist_node";
+  items: ChecklistItem[];
+};
+
+export type WorkspaceNode =
+  TextNode | ImageNode | CanvasNode | LinkNode | ChecklistNode;
 export type NodeTransformPatch = Partial<
   Point & { width: number; height: number }
 >;

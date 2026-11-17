@@ -1769,6 +1769,7 @@ export default function Workspace({
       image_node: [360, 280],
       canvas_node: [260, 140],
       link_node: [480, 318],
+      checklist_node: [300, 340],
     }[type];
     const width = Math.min(
       size[0],
@@ -1812,7 +1813,9 @@ export default function Workspace({
                   workspace.canvas,
                 ),
               }
-            : { ...base, type, text: "" };
+            : type === "checklist_node"
+              ? { ...base, type, title: "체크리스트", items: [] }
+              : { ...base, type, text: "" };
     if (at) {
       // 노드와 선을 한 번의 변경으로 넣는다. 갱신 함수 안에서도 같은 선 ID를 쓰도록 미리 만든다.
       const lineIds = at.sources.map(() => uuidv4());
@@ -2798,7 +2801,7 @@ export default function Workspace({
                   onOpen={openCanvas}
                   searchCount={nestedSearchCounts?.get(node.id) ?? 0}
                 />
-              ) : (
+              ) : node.type === "checklist_node" ? null : (
                 <ImageNodeView
                   key={node.id}
                   {...frame}

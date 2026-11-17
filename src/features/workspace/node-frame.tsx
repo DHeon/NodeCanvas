@@ -83,7 +83,9 @@ export default function NodeFrame({
         ? "이미지"
         : node.type === "link_node"
           ? "링크"
-          : "텍스트";
+          : node.type === "checklist_node"
+            ? "체크리스트"
+            : "텍스트";
   const placeholder = node.type === "text_node" ? "제목" : label;
   const [editingTitle, setEditingTitle] = useState(false);
   const titleInput = useRef<HTMLInputElement>(null);

@@ -4,6 +4,7 @@ import type { WorkspaceDocument } from "./types";
 import { getConnectionKey, MAX_CONNECTIONS } from "./connections";
 import { CONNECTION_COLOR_KEYS } from "./connection-colors";
 import { MAX_NODE_TAGS, MAX_PROJECT_TAGS, TAG_NAME_PATTERN } from "./tags";
+import { MAX_CHECKLIST_ITEM_LENGTH, MAX_CHECKLIST_ITEMS } from "./checklist";
 import {
   MAX_DRAWING_POINTS,
   MAX_POINTS_PER_STROKE,
@@ -68,6 +69,34 @@ const nodeBaseSchema = z.strictObject({
       message: "노드에 같은 태그가 두 번 붙었습니다.",
     })
     .optional(),
+  role: z
+    .strictObject({ kind: z.literal("todo"), done: z.boolean() })
+    .optional(),
+});
+
+const checklistItemSchema = z.strictObject({
+  id: z.uuid(),
+  // 앞뒤 공백을 뺀 1–200자. 빈 글은 저장하지 않는다(편집에서 지운다).
+  text: z
+    .string()
+    .max(MAX_CHECKLIST_ITEM_LENGTH)
+    .refine((value) => value.trim().length > 0 && value === value.trim(), {
+      message: "체크리스트 항목 글이 비어 있거나 앞뒤에 공백이 있습니다.",
+    }),
+  done: z.boolean(),
+});
+
+const checklistNodeSchema = nodeBaseSchema.extend({
+  type: z.literal("checklist_node"),
+  // 체크리스트에는 역할을 붙이지 않는다.
+  role: z.undefined().optional(),
+  items: z
+    .array(checklistItemSchema)
+    .max(MAX_CHECKLIST_ITEMS)
+    .refine(
+      (items) => new Set(items.map((item) => item.id)).size === items.length,
+      { message: "체크리스트 항목 ID가 겹칩니다." },
+    ),
 });
 
 const tagDefinitionSchema = z.strictObject({
@@ -154,6 +183,7 @@ function documentSchemaAtDepth(depth: number): z.ZodType<WorkspaceDocument> {
           textNodeSchema,
           imageNodeSchema,
           linkNodeSchema,
+          checklistNodeSchema,
           nodeBaseSchema.extend({
             type: z.literal("canvas_node"),
             document: documentSchemaAtDepth(depth + 1),
@@ -163,6 +193,7 @@ function documentSchemaAtDepth(depth: number): z.ZodType<WorkspaceDocument> {
           textNodeSchema,
           imageNodeSchema,
           linkNodeSchema,
+          checklistNodeSchema,
         ]);
   return z
     .strictObject({
