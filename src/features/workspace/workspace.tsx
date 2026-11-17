@@ -35,7 +35,14 @@ import {
   type SearchResult,
 } from "./search";
 import SearchPanel from "./search-panel";
-import { setTodoDone } from "./roles";
+import { roleForConnectedNode, setRole, setTodoDone } from "./roles";
+import {
+  addChecklistItem,
+  buildChecklist,
+  editChecklistItem,
+  removeChecklistItem,
+} from "./checklist";
+import ChecklistNodeView from "./checklist-node-view";
 import ConnectNodeMenu from "./connect-node-menu";
 import ConflictPanel from "./conflict-panel";
 import ImageViewer from "./image-viewer";
@@ -663,7 +670,7 @@ export default function Workspace({
       if (
         event.target instanceof Element &&
         event.target.closest(
-          "textarea, input, [contenteditable='true'], [data-search-panel]",
+          "textarea, input, [contenteditable='true'], [data-search-panel], [data-scroll-region]",
         )
       ) {
         return;
@@ -1150,6 +1157,7 @@ export default function Workspace({
       },
       c: () => addNode("canvas_node"),
       l: () => addNode("link_node"),
+      k: () => addNode("checklist_node"),
       p: () => changeTool(tool === "pen" ? "select" : "pen"),
       e: () => changeTool(tool === "eraser" ? "select" : "eraser"),
     };
@@ -1817,6 +1825,16 @@ export default function Workspace({
             : type === "checklist_node"
               ? { ...base, type, title: "체크리스트", items: [] }
               : { ...base, type, text: "" };
+    // 체크리스트에서 이어서 만들면 새 노드는 할 일이 된다.
+    if (at) {
+      const role = roleForConnectedNode(
+        workspace.nodes.filter((candidate) =>
+          at.sources.some((source) => source.nodeId === candidate.id),
+        ),
+        type,
+      );
+      if (role) node.role = role;
+    }
     if (at) {
       // 노드와 선을 한 번의 변경으로 넣는다. 갱신 함수 안에서도 같은 선 ID를 쓰도록 미리 만든다.
       const lineIds = at.sources.map(() => uuidv4());
@@ -1921,6 +1939,14 @@ export default function Workspace({
       searchInputRef.current?.focus();
       return;
     }
+    focusNodeById(node.id);
+    searchInputRef.current?.focus();
+  }
+
+  /** 지금 공간의 노드를 화면 가운데 두고 선택한다(검색 결과·체크리스트 항목 고르기). */
+  function focusNodeById(nodeId: string) {
+    const node = workspace.nodes.find((candidate) => candidate.id === nodeId);
+    if (!node) return;
     const viewport = viewportRef.current;
     if (viewport) {
       const rect = viewport.getBoundingClientRect();
@@ -1932,7 +1958,67 @@ export default function Workspace({
     }
     setSelectedNodeIds([node.id]);
     setSelectedConnectionId(null);
-    searchInputRef.current?.focus();
+  }
+
+  /** 지금 공간 문서를 바꾸는 체크리스트·역할 편집 한 번(실행 취소 한 단계). */
+  function applyDocumentChange(
+    update: (root: WorkspaceDocument, path: string[]) => WorkspaceDocument,
+  ) {
+    if (gestureRef.current) return;
+    const path = canvasPath.slice(0, activeDepth);
+    dispatchHistory({ type: "commit" });
+    dispatchHistory({ type: "change", update: (root) => update(root, path) });
+  }
+
+  /** 직접 항목을 더한다. 더했으면 true(입력칸을 비운다). */
+  function addChecklistItemTo(checklistId: string, text: string): boolean {
+    if (gestureRef.current) return false;
+    const path = canvasPath.slice(0, activeDepth);
+    // 갱신 함수 안에서도 같은 ID를 쓰도록 미리 만든다.
+    const itemId = uuidv4();
+    const preview = addChecklistItem(
+      rootDocument,
+      path,
+      checklistId,
+      text,
+      () => itemId,
+    );
+    if ("error" in preview) {
+      setNotice(preview.error);
+      return false;
+    }
+    if (preview.document === rootDocument) return false;
+    applyDocumentChange((root, currentPath) => {
+      const result = addChecklistItem(
+        root,
+        currentPath,
+        checklistId,
+        text,
+        () => itemId,
+      );
+      return "document" in result ? result.document : root;
+    });
+    return true;
+  }
+
+  function editChecklistItemIn(
+    checklistId: string,
+    itemId: string,
+    patch: { text?: string; done?: boolean },
+  ) {
+    applyDocumentChange((root, path) =>
+      editChecklistItem(root, path, checklistId, itemId, patch),
+    );
+  }
+
+  function removeChecklistItemFrom(checklistId: string, itemId: string) {
+    applyDocumentChange((root, path) =>
+      removeChecklistItem(root, path, checklistId, itemId),
+    );
+  }
+
+  function makeTodos(nodeIds: string[]) {
+    applyDocumentChange((root, path) => setRole(root, path, nodeIds, "todo"));
   }
 
   function navigateCanvas(path: string[]) {
@@ -2676,6 +2762,7 @@ export default function Workspace({
           onAddImageNode={() => addNode("image_node")}
           onAddCanvasNode={() => addNode("canvas_node")}
           onAddLinkNode={() => addNode("link_node")}
+          onAddChecklistNode={() => addNode("checklist_node")}
           canvasDepthLimit={activeDepth >= MAX_CANVAS_DEPTH}
           tool={tool}
           onToolChange={changeTool}
@@ -2814,7 +2901,24 @@ export default function Workspace({
                   onOpen={openCanvas}
                   searchCount={nestedSearchCounts?.get(node.id) ?? 0}
                 />
-              ) : node.type === "checklist_node" ? null : (
+              ) : node.type === "checklist_node" ? (
+                <ChecklistNodeView
+                  key={node.id}
+                  {...frame}
+                  node={node}
+                  view={buildChecklist(workspace, node.id)}
+                  onToggleNode={toggleTodoNode}
+                  onAddItem={(text) => addChecklistItemTo(node.id, text)}
+                  onEditItem={(itemId, patch) =>
+                    editChecklistItemIn(node.id, itemId, patch)
+                  }
+                  onRemoveItem={(itemId) =>
+                    removeChecklistItemFrom(node.id, itemId)
+                  }
+                  onMakeTodos={makeTodos}
+                  onFocusNode={focusNodeById}
+                />
+              ) : (
                 <ImageNodeView
                   key={node.id}
                   {...frame}

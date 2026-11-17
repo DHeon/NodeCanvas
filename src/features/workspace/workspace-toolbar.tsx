@@ -1,6 +1,6 @@
 "use client";
 
-import { EraserIcon, PenIcon } from "./icons";
+import { ChecklistIcon, EraserIcon, PenIcon } from "./icons";
 
 export type WorkspaceTool = "select" | "pen" | "eraser";
 
@@ -9,6 +9,7 @@ type WorkspaceToolbarProps = {
   onAddImageNode: () => void;
   onAddCanvasNode: () => void;
   onAddLinkNode: () => void;
+  onAddChecklistNode: () => void;
   canvasDepthLimit: boolean;
   tool: WorkspaceTool;
   onToolChange: (tool: WorkspaceTool) => void;
@@ -22,6 +23,7 @@ export default function WorkspaceToolbar({
   onAddImageNode,
   onAddCanvasNode,
   onAddLinkNode,
+  onAddChecklistNode,
   canvasDepthLimit,
   tool,
   onToolChange,
@@ -130,6 +132,15 @@ export default function WorkspaceToolbar({
             <path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1" />
             <path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1" />
           </svg>
+        </button>
+        <button
+          type="button"
+          onClick={onAddChecklistNode}
+          aria-label="체크리스트 노드 추가"
+          title="체크리스트 노드 추가 (K)"
+          className="flex h-10 w-10 items-center justify-center rounded-[11px] text-bark-soft hover:bg-bark/6 focus-visible:outline-2 focus-visible:outline-moss-deep active:bg-bark/10"
+        >
+          <ChecklistIcon size={22} />
         </button>
       </div>
       <div className="mx-1.5 my-[7px] h-px bg-rule" />

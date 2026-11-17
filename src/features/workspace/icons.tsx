@@ -168,6 +168,14 @@ export function CanvasIcon(props: IconProps) {
   );
 }
 
+export function ChecklistIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m4 6.5 1.6 1.6L8.5 5.2M4 13.5l1.6 1.6 2.9-2.9M11.5 7h8.5M11.5 14h8.5M5 20h1.5M11.5 20h8.5" />
+    </Icon>
+  );
+}
+
 export function LinkIcon(props: IconProps) {
   return (
     <Icon {...props}>

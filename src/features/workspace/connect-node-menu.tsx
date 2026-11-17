@@ -1,7 +1,13 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef } from "react";
-import { CanvasIcon, ImageIcon, LinkIcon, TextIcon } from "./icons";
+import {
+  CanvasIcon,
+  ChecklistIcon,
+  ImageIcon,
+  LinkIcon,
+  TextIcon,
+} from "./icons";
 import type { WorkspaceNode } from "./types";
 
 type ConnectNodeMenuProps = {
@@ -18,6 +24,12 @@ const ITEMS = [
   { type: "image_node", label: "이미지", key: "i", Icon: ImageIcon },
   { type: "canvas_node", label: "캔버스", key: "c", Icon: CanvasIcon },
   { type: "link_node", label: "링크", key: "l", Icon: LinkIcon },
+  {
+    type: "checklist_node",
+    label: "체크리스트",
+    key: "k",
+    Icon: ChecklistIcon,
+  },
 ] as const;
 
 const EDGE_GAP = 8;

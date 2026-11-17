@@ -211,6 +211,7 @@ const names = [
   "startDrawing",
   "eraseAlong",
   "pickSearchResult",
+  "focusNodeById",
   "openTagLens",
 ];
 const functions = new Map<string, string>();
@@ -1554,4 +1555,10 @@ test("지우개 문지르기는 한 단계로 되돌리고, Escape는 문지르�
   h.call("handleWorkspaceKeyDown", key("Escape"));
   assert.equal(h.state.history.present, original);
   assert.equal(h.state.history.past.length, 0);
+});
+
+test("단축키: K는 체크리스트 노드를 추가한다", () => {
+  const h = setup();
+  h.call("handleWorkspaceKeyDown", key("k"));
+  assert.deepEqual(h.state.calls, ["add:checklist_node"]);
 });
