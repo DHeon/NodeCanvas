@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type {
   NodeConnection,
   NodeTransformPatch,
@@ -6,7 +6,7 @@ import type {
   TextNodeContentPatch,
   WorkspaceNode,
 } from "./types";
-import { ChevronLeftIcon, ChevronRightIcon } from "./icons";
+import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from "./icons";
 import { nodeDisplayName } from "./workspace-tree";
 import TagInput from "./tag-input";
 import { canHaveRole } from "./roles";
@@ -143,7 +143,15 @@ function ConnectionColorPicker({
   );
 }
 
-/** 역할 고르기. 체크리스트는 역할을 가질 수 없어 빼고 판단한다. */
+const ROLE_OPTIONS = [
+  { value: "none", label: "없음", hint: "역할 없이 쓰는 노드" },
+  { value: "todo", label: "할 일", hint: "체크하고, 체크리스트에 모여요" },
+] as const;
+
+/**
+ * 역할 고르기. 위에서 역할을 목록으로 고르고, 고른 역할이 더하는 기능은 그 역할 이름의 칸에 모은다.
+ * 체크리스트는 역할을 가질 수 없어 빼고 판단한다.
+ */
 function RoleField({
   nodes,
   onRoleChange,
@@ -153,6 +161,28 @@ function RoleField({
   onRoleChange: (nodeIds: string[], role: "todo" | null) => void;
   onTodoDone: (nodeId: string, done: boolean) => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const container = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const listId = useId();
+
+  useEffect(() => {
+    if (!open) return;
+    function dismiss(event: PointerEvent) {
+      if (
+        event.target instanceof Node &&
+        !container.current?.contains(event.target)
+      )
+        setOpen(false);
+    }
+    document.addEventListener("pointerdown", dismiss);
+    // 열리면 지금 역할로 포커스를 옮겨 방향키로 바로 고를 수 있게 한다.
+    container.current
+      ?.querySelector<HTMLInputElement>("input:checked, input")
+      ?.focus({ preventScroll: true });
+    return () => document.removeEventListener("pointerdown", dismiss);
+  }, [open]);
+
   const candidates = nodes.filter(canHaveRole);
   if (candidates.length === 0) return null;
   const todoCount = candidates.filter(
@@ -167,59 +197,143 @@ function RoleField({
   const ids = candidates.map((node) => node.id);
   // "완료"는 노드를 하나만 골랐을 때만 보인다(체크리스트가 섞인 여러 선택 제외).
   const single = nodes.length === 1 ? candidates[0] : null;
+  const currentLabel =
+    current === "mixed"
+      ? "여러 가지"
+      : ROLE_OPTIONS.find((option) => option.value === current)!.label;
+
+  function close() {
+    setOpen(false);
+    trigger.current?.focus({ preventScroll: true });
+  }
+
   return (
-    <section className={sectionClass}>
-      <fieldset>
-        <legend className={`${headingClass} mb-3`}>
-          역할
-          {current === "mixed" && (
-            <span className="ml-1.5 font-normal text-lichen">· 여러 가지</span>
+    <>
+      <section className={sectionClass}>
+        <div
+          ref={container}
+          className="relative"
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && open) {
+              event.preventDefault();
+              event.stopPropagation();
+              close();
+            }
+            if (
+              event.key === "Enter" &&
+              open &&
+              event.target instanceof HTMLInputElement
+            ) {
+              event.preventDefault();
+              close();
+            }
+          }}
+        >
+          <h3 id={`${listId}-label`} className={`${headingClass} mb-3`}>
+            역할
+          </h3>
+          <button
+            ref={trigger}
+            type="button"
+            aria-haspopup="true"
+            aria-expanded={open}
+            aria-controls={listId}
+            aria-labelledby={`${listId}-label ${listId}-value`}
+            onClick={() => setOpen((value) => !value)}
+            className="flex w-full items-center justify-between gap-2 rounded-lg border border-rule bg-white px-3 py-2 text-left text-sm text-bark hover:bg-mist focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-moss-deep"
+          >
+            <span
+              id={`${listId}-value`}
+              className={current === "mixed" ? "text-lichen" : ""}
+            >
+              {currentLabel}
+            </span>
+            <ChevronDownIcon
+              size={16}
+              className={`shrink-0 text-lichen transition-transform ${open ? "rotate-180" : ""}`}
+            />
+          </button>
+          {open && (
+            <fieldset
+              id={listId}
+              className="mt-1 rounded-lg border border-rule bg-white p-1 shadow-card"
+            >
+              <legend className="sr-only">역할</legend>
+              {ROLE_OPTIONS.map((option) => {
+                const active = option.value === current;
+                return (
+                  <label
+                    key={option.value}
+                    className={`flex cursor-pointer items-center justify-between gap-3 rounded-md px-3 py-2 has-focus-visible:outline-2 has-focus-visible:-outline-offset-2 has-focus-visible:outline-moss-deep ${active ? "bg-moss-wash text-bark" : "text-bark-soft hover:bg-mist"}`}
+                  >
+                    <input
+                      type="radio"
+                      name={`${listId}-role`}
+                      value={option.value}
+                      checked={active}
+                      onChange={() =>
+                        onRoleChange(
+                          ids,
+                          option.value === "todo" ? "todo" : null,
+                        )
+                      }
+                      // 방향키로 고를 때도 click이 오므로(detail 0) 실제 마우스 클릭에서만 닫는다.
+                      onClick={(event) => {
+                        if (event.detail > 0) close();
+                      }}
+                      className="sr-only"
+                    />
+                    <span className="min-w-0">
+                      <span className="block text-sm">{option.label}</span>
+                      <span className="block text-xs text-lichen">
+                        {option.hint}
+                      </span>
+                    </span>
+                    {active && (
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                        className="shrink-0 text-moss-deep"
+                      >
+                        <path d="m5 12 5 5 9-10" />
+                      </svg>
+                    )}
+                  </label>
+                );
+              })}
+            </fieldset>
           )}
-        </legend>
-        <div className="grid grid-cols-2 rounded-lg border border-rule bg-white p-0.5">
-          {(
-            [
-              ["none", "없음"],
-              ["todo", "할 일"],
-            ] as const
-          ).map(([value, label]) => {
-            const active = current === value;
-            return (
-              <label
-                key={value}
-                className={`flex cursor-pointer items-center justify-center rounded-md px-3 py-1.5 text-sm has-focus-visible:outline-2 has-focus-visible:outline-moss-deep ${active ? "bg-ink text-white" : "text-bark-soft hover:bg-mist"}`}
-              >
-                <input
-                  type="radio"
-                  name={`node-role-${ids.join("-")}`}
-                  value={value}
-                  checked={active}
-                  onChange={() =>
-                    onRoleChange(ids, value === "todo" ? "todo" : null)
-                  }
-                  className="sr-only"
-                />
-                {label}
-              </label>
-            );
-          })}
         </div>
-      </fieldset>
-      {single?.role?.kind === "todo" && (
-        <label className="flex items-center gap-2 text-sm text-bark-soft">
-          <input
-            type="checkbox"
-            className="h-4 w-4 accent-moss-deep"
-            checked={single.role.done}
-            onChange={(event) => onTodoDone(single.id, event.target.checked)}
-          />
-          완료
-        </label>
+      </section>
+      {current === "todo" && (
+        <section className={sectionClass}>
+          <h3 className={headingClass}>할 일</h3>
+          {single?.role?.kind === "todo" && (
+            <label className="flex items-center gap-2 text-sm text-bark-soft">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-moss-deep"
+                checked={single.role.done}
+                onChange={(event) =>
+                  onTodoDone(single.id, event.target.checked)
+                }
+              />
+              완료
+            </label>
+          )}
+          <p className={hintClass}>
+            체크리스트 노드에 연결하면 목록에 들어가요.
+          </p>
+        </section>
       )}
-      <p className={hintClass}>
-        할 일 노드는 체크리스트 노드에 연결하면 목록에 들어가요.
-      </p>
-    </section>
+    </>
   );
 }
 
