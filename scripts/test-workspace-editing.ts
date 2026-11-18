@@ -32,6 +32,7 @@ import {
   replaceNodeImage,
 } from "../src/features/workspace/node-transform";
 import * as drawing from "../src/features/workspace/drawing";
+import * as groupOps from "../src/features/workspace/groups";
 import {
   resolveWorkspacePath,
   updateWorkspaceAtPath,
@@ -288,6 +289,7 @@ type TestState = {
   tool?: "select" | "pen" | "eraser";
   canvasPath?: string[];
   searchActive?: number | null;
+  joinTarget?: string | null;
   searchOpen?: boolean;
   searchQuery?: string;
   debouncedQuery?: string;
@@ -312,7 +314,9 @@ const factory = new Function(
   "updateWorkspaceAtPath",
   "drawing",
   "connectSourcesToTarget",
+  "groupOps",
   `
+  const { canJoinByDrag, groupAtPoint, joinGroup } = groupOps;
   const { appendPoint, appendStroke, countDocumentDrawingPoints, eraseStrokes,
     exceedsDrawingLimits, simplifyPoints, MAX_DRAWING_POINTS, MAX_STROKES_PER_CANVAS } = drawing;
   const ERASER_RADIUS = 10;
@@ -348,6 +352,7 @@ const factory = new Function(
   };
   const setSearchActive = value => { state.searchActive = value; };
   const setConnectMenu = value => { state.connectMenu = value; };
+  const setJoinTargetId = value => { state.joinTarget = value; };
   const setSearchOpen = value => { state.searchOpen = value; };
   const setSearchQuery = value => { state.searchQuery = value; };
   const setDebouncedQuery = value => { state.debouncedQuery = value; };
@@ -426,6 +431,7 @@ function setup(selected: string[] = []) {
         updateWorkspaceAtPath,
         drawing,
         connectSourcesToTarget,
+        groupOps,
       )[name](...args);
     },
   };
@@ -1600,4 +1606,68 @@ test("startGroupDrag on an empty group does nothing", () => {
   const h = groupedSetup();
   h.call("startGroupDrag", pointer(), "missing");
   assert.equal(h.gestureRef.current, null);
+});
+
+const groupOf = (h: ReturnType<typeof setup>, id: string) =>
+  h.state.history.present.nodes.find((node) => node.id === id)!.groupId;
+// 캔버스 (400, 300) = 화면 (220, 190): (clientX - 10 - 10) / 0.5
+const insideGroup = { clientX: 220, clientY: 190 };
+
+test("dragging ungrouped nodes onto a group joins on release in one undo step", () => {
+  const h = groupedSetup();
+  const c = h.state.history.present.nodes.find((node) => node.id === "c")!;
+  h.call("startNodeDrag", pointer(), c);
+  h.call("moveGesture", pointer(insideGroup));
+  assert.equal(h.state.joinTarget, "g");
+  h.call(
+    "endGesture",
+    pointer({ type: "pointerup", buttons: 0, ...insideGroup }),
+  );
+  assert.equal(groupOf(h, "c"), "g");
+  assert.equal(h.state.history.past.length, 1);
+  assert.equal(h.state.joinTarget, null);
+  h.call("undo");
+  assert.equal(groupOf(h, "c"), undefined);
+});
+
+test("mixed drag does not join", () => {
+  const h = setup(["a", "c"]);
+  const base = fixture();
+  h.state.history = createWorkspaceHistory({
+    ...base,
+    groups: [
+      { id: "g", title: "가" },
+      { id: "h", title: "나" },
+    ],
+    nodes: base.nodes.map((node) =>
+      node.id === "a"
+        ? { ...node, groupId: "g" }
+        : node.id === "b"
+          ? { ...node, groupId: "h" }
+          : node,
+    ),
+  } as WorkspaceDocument);
+  const c = h.state.history.present.nodes.find((node) => node.id === "c")!;
+  h.call("startNodeDrag", pointer(), c);
+  // b(600,400) 그룹 h 안: 캔버스 (650, 450) = 화면 (345, 265)
+  h.call("moveGesture", pointer({ clientX: 345, clientY: 265 }));
+  assert.equal(h.state.joinTarget ?? null, null);
+  h.call(
+    "endGesture",
+    pointer({ type: "pointerup", buttons: 0, clientX: 345, clientY: 265 }),
+  );
+  assert.equal(groupOf(h, "c"), undefined);
+  assert.equal(groupOf(h, "a"), "g");
+});
+
+test("cancelled drag does not join", () => {
+  const h = groupedSetup();
+  const c = h.state.history.present.nodes.find((node) => node.id === "c")!;
+  h.call("startNodeDrag", pointer(), c);
+  h.call("moveGesture", pointer(insideGroup));
+  h.call(
+    "endGesture",
+    pointer({ type: "pointercancel", buttons: 0, ...insideGroup }),
+  );
+  assert.equal(groupOf(h, "c"), undefined);
 });

@@ -45,7 +45,7 @@ import {
 } from "./checklist";
 import ChecklistNodeView from "./checklist-node-view";
 import GroupLayer from "./group-layer";
-import { renameGroup } from "./groups";
+import { canJoinByDrag, groupAtPoint, joinGroup, renameGroup } from "./groups";
 import ConnectNodeMenu from "./connect-node-menu";
 import ConflictPanel from "./conflict-panel";
 import ImageViewer from "./image-viewer";
@@ -164,6 +164,8 @@ type Gesture =
       startPositions: Map<string, Point>;
       bounds: { left: number; top: number; right: number; bottom: number };
       zoom: number;
+      /** 놓으면 들어갈 그룹(끄는 노드가 모두 그룹 없을 때만). */
+      joinGroupId?: string | null;
     }
   | {
       kind: "resize";
@@ -432,6 +434,8 @@ export default function Workspace({
     null,
   );
   const [connectMenu, setConnectMenu] = useState<ConnectMenuState | null>(null);
+  // 노드를 끄는 동안 커서 아래에 있어 놓으면 들어갈 그룹(진하게 표시).
+  const [joinTargetId, setJoinTargetId] = useState<string | null>(null);
   // 다른 공간으로 옮기면(뒤로 가기 포함) 이전 공간의 선택은 의미가 없으므로 비운다.
   const [selectionCanvasKey, setSelectionCanvasKey] = useState(canvasKey);
   if (selectionCanvasKey !== canvasKey) {
@@ -485,6 +489,7 @@ export default function Workspace({
     setSelectionRect(null);
     setConnectionDraft(null);
     setDrawDraft(null);
+    setJoinTargetId(null);
 
     if (
       gesture?.kind === "node" ||
@@ -1656,12 +1661,43 @@ export default function Workspace({
 
       return changed ? { ...current, nodes } : current;
     });
+
+    // 끄는 노드가 모두 그룹이 없으면 커서 아래 그룹을 들어갈 곳으로 표시한다.
+    if (gesture.kind === "node") {
+      const dragged = workspace.nodes.filter((node) =>
+        gesture.startPositions.has(node.id),
+      );
+      const pointer = getCanvasPoint(event.clientX, event.clientY);
+      const joinGroupId =
+        pointer && canJoinByDrag(dragged)
+          ? groupAtPoint(workspace, pointer)
+          : null;
+      if (joinGroupId !== (gesture.joinGroupId ?? null)) {
+        gesture.joinGroupId = joinGroupId;
+        setJoinTargetId(joinGroupId);
+      }
+    }
   }
 
   function endGesture(event: ReactPointerEvent<HTMLDivElement>) {
     const gesture = gestureRef.current;
 
     if (!gesture || gesture.pointerId !== event.pointerId) return;
+
+    // 손을 떼면 표시된 그룹에 들어간다. 끌기와 같은 실행 취소 단계(커밋 전)에 넣는다.
+    if (
+      gesture.kind === "node" &&
+      event.type === "pointerup" &&
+      gesture.joinGroupId
+    ) {
+      const nodeIds = [...gesture.startPositions.keys()];
+      const groupId = gesture.joinGroupId;
+      const path = canvasPath.slice(0, activeDepth);
+      dispatchHistory({
+        type: "change",
+        update: (root) => joinGroup(root, path, nodeIds, groupId),
+      });
+    }
 
     // 취소나 포인터 캡처 해제에서는 연결을 만들지 않는다.
     let menu: ConnectMenuState | null = null;
@@ -2860,7 +2896,7 @@ export default function Workspace({
             />
             <GroupLayer
               document={workspace}
-              joinTargetId={null}
+              joinTargetId={joinTargetId}
               interactive={tool === "select"}
               onTabPointerDown={startGroupDrag}
               onSelectMembers={(groupId) => {
