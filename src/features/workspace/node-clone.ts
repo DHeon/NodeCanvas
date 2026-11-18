@@ -16,14 +16,14 @@ function cloneDocument(document: WorkspaceDocument): WorkspaceDocument {
   };
 }
 
-function cloneNode(node: WorkspaceNode): WorkspaceNode {
+export function cloneNode(node: WorkspaceNode): WorkspaceNode {
   const base = { ...node, id: uuidv4(), position: { ...node.position } };
   return node.type === "canvas_node"
     ? { ...base, type: "canvas_node", document: cloneDocument(node.document) }
     : (base as WorkspaceNode);
 }
 
-function remapConnections(
+export function remapConnections(
   connections: NodeConnection[],
   ids: Map<string, string>,
 ): NodeConnection[] {
