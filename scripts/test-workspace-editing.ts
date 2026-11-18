@@ -219,12 +219,14 @@ const names = [
   "startGroupDrag",
   "groupSelection",
   "ungroupSelection",
-  "openNodeMenuForSelection",
-  "openNodeMenuAt",
+  "openMenuFromKeyboard",
+  "openContextMenuAt",
+  "contextMenuItems",
+  "copyFromMenu",
+  "runMenuAction",
   "applyDocumentChange",
   "openTagLens",
   "copySelection",
-  "cutSelection",
   "pastePoint",
   "pasteAt",
   "handleCopy",
@@ -262,11 +264,18 @@ class TestElement {
   constructor(
     private editable = false,
     private node = false,
-    public dataset: { nodeId?: string; connectionSide?: string } = {},
+    public dataset: {
+      nodeId?: string;
+      connectionSide?: string;
+      groupId?: string;
+    } = {},
   ) {}
   closest(selector: string) {
     if (selector === "[data-connection-side]") {
       return this.dataset.connectionSide ? this : null;
+    }
+    if (selector === "[data-group-id]") {
+      return this.dataset.groupId ? this : null;
     }
     return (selector.includes("[data-node-id]") ? this.node : this.editable)
       ? this
@@ -304,7 +313,12 @@ type TestState = {
   canvasPath?: string[];
   searchActive?: number | null;
   joinTarget?: string | null;
-  nodeMenu?: { left: number; top: number } | null;
+  contextMenu?: {
+    left: number;
+    top: number;
+    point: Point;
+    kind: "nodes" | "paste" | "text";
+  } | null;
   searchOpen?: boolean;
   searchQuery?: string;
   debouncedQuery?: string;
@@ -312,7 +326,7 @@ type TestState = {
   clip?: clipOps.NodeClip | null;
   lastPointer?: { clientX: number; clientY: number } | null;
 };
-type Handlers = Record<string, (...args: unknown[]) => void>;
+type Handlers = Record<string, (...args: unknown[]) => unknown>;
 const factory = new Function(
   "state",
   "viewportRef",
@@ -337,7 +351,11 @@ const factory = new Function(
   `
   const { canJoinByDrag, groupAtPoint, joinGroup, groupNodes, ungroupNodes, renameGroup } = groupOps;
   const { selectedGroupIds, makeClip, pasteClip, PASTE_ERROR_NOTICES } = clipOps;
-  const { copiesNodes } = keyTargets;
+  const { copiesNodes, hasSelectedText } = keyTargets;
+  const runTextAction = () => { state.calls.push("text-action"); };
+  const hasClip = !!state.clip;
+  const contextMenu = state.contextMenu ?? null;
+  const setHasClip = () => {};
   const clipboardRef = {
     get current() { return state.clip ?? null; },
     set current(value) { state.clip = value; },
@@ -349,7 +367,7 @@ const factory = new Function(
   const normalizeLinkUrl = url => url;
   const setLinkUrl = () => { state.calls.push("link-url"); };
   const imageUploads = { upload: () => { state.calls.push("upload"); } };
-  const setNodeMenu = value => { state.nodeMenu = value; };
+  const setContextMenu = value => { state.contextMenu = value; };
   const { appendPoint, appendStroke, countDocumentDrawingPoints, eraseStrokes,
     exceedsDrawingLimits, simplifyPoints, MAX_DRAWING_POINTS, MAX_STROKES_PER_CANVAS } = drawing;
   const ERASER_RADIUS = 10;
@@ -445,8 +463,8 @@ function setup(selected: string[] = []) {
   return {
     state,
     gestureRef,
-    call(name: string, ...args: unknown[]) {
-      factory(
+    call(name: string, ...args: unknown[]): unknown {
+      return factory(
         state,
         { current: viewport },
         gestureRef,
@@ -1741,13 +1759,11 @@ test("G with nothing selected does nothing", () => {
 test("context menu key and Shift+F10 open the node menu for the selection", () => {
   const h = setup(["b"]);
   h.call("handleWorkspaceKeyDown", key("ContextMenu"));
-  assert.ok(h.state.nodeMenu);
-  h.state.nodeMenu = null;
+  assert.equal(h.state.contextMenu?.kind, "nodes");
+  h.state.contextMenu = null;
   h.call("handleWorkspaceKeyDown", key("F10", { shiftKey: true }));
-  assert.ok(h.state.nodeMenu);
-  const empty = setup();
-  empty.call("handleWorkspaceKeyDown", key("ContextMenu"));
-  assert.equal(empty.state.nodeMenu ?? null, null);
+  const menu = h.state.contextMenu as TestState["contextMenu"];
+  assert.equal(menu?.kind, "nodes");
 });
 
 test("grouping and ungrouping return focus to the canvas", () => {
@@ -1767,19 +1783,17 @@ test("right-click selects the node unless it is already selected", () => {
     target: new TestElement(false, nodeId !== null, nodeId ? { nodeId } : {}),
     preventDefault() {},
   });
-  h.call("openNodeMenuAt", event("a"));
+  h.call("openContextMenuAt", event("a"));
   assert.deepEqual(h.state.selected, ["a"]);
-  assert.deepEqual(h.state.nodeMenu, { left: 200, top: 100 });
+  assert.equal(h.state.contextMenu!.left, 200);
+  assert.equal(h.state.contextMenu!.top, 100);
+  assert.equal(h.state.contextMenu!.kind, "nodes");
 
   h.state.selected = ["b", "c"];
-  h.state.nodeMenu = null;
-  h.call("openNodeMenuAt", event("c"));
+  h.state.contextMenu = null;
+  h.call("openContextMenuAt", event("c"));
   assert.deepEqual(h.state.selected, ["b", "c"]);
-  assert.ok(h.state.nodeMenu);
-
-  h.state.nodeMenu = null;
-  h.call("openNodeMenuAt", event(null));
-  assert.equal(h.state.nodeMenu ?? null, null);
+  assert.equal(h.state.contextMenu!.kind, "nodes");
 });
 
 test("tab drag stops the whole group at the finite canvas edge", () => {
@@ -1982,4 +1996,172 @@ test("paste over the node limit shows the notice and changes nothing", () => {
       "notice:노드는 프로젝트 전체에서 1000개까지 만들 수 있어요.",
     ),
   );
+});
+
+// ── 상황별 우클릭 메뉴 ──
+type MenuEntry =
+  "separator" | { id: string; label: string; disabled?: boolean };
+function rightClick(target: unknown, clientX = 210, clientY = 120) {
+  return {
+    clientX,
+    clientY,
+    target,
+    defaultPrevented: false,
+    preventDefault() {
+      this.defaultPrevented = true;
+    },
+  };
+}
+function menuItems(h: ReturnType<typeof setup>) {
+  return h.call("contextMenuItems", h.state.contextMenu) as MenuEntry[];
+}
+const labels = (items: MenuEntry[]) =>
+  items.map((item) => (item === "separator" ? item : item.label));
+const entry = (items: MenuEntry[], id: string) =>
+  items.find((item) => item !== "separator" && item.id === id) as Exclude<
+    MenuEntry,
+    "separator"
+  >;
+
+test("right-click on a node opens the node menu with cut, copy, paste and group", () => {
+  const h = setup();
+  const event = rightClick(new TestElement(false, true, { nodeId: "a" }));
+  h.call("openContextMenuAt", event);
+  assert.equal(event.defaultPrevented, true);
+  const items = menuItems(h);
+  assert.deepEqual(labels(items), [
+    "잘라내기",
+    "복사",
+    "붙여넣기",
+    "separator",
+    "그룹화",
+  ]);
+  assert.equal(entry(items, "paste").disabled, true);
+  h.call("runMenuAction", "copy");
+  assert.equal(h.state.clip!.nodes[0].id, "a");
+  assert.equal(entry(menuItems(h), "paste").disabled, false);
+});
+
+test("right-click on a grouped selection adds ungroup", () => {
+  const h = groupedSetup();
+  h.call(
+    "openContextMenuAt",
+    rightClick(new TestElement(false, true, { nodeId: "a" })),
+  );
+  assert.deepEqual(labels(menuItems(h)).slice(-2), ["그룹화", "그룹화 해제"]);
+});
+
+test("right-click on empty space keeps the selection and opens the node menu", () => {
+  const h = setup(["a", "b"]);
+  h.call("openContextMenuAt", rightClick(new TestElement()));
+  assert.deepEqual(h.state.selected, ["a", "b"]);
+  assert.equal(h.state.contextMenu!.kind, "nodes");
+});
+
+test("right-click on empty space with nothing selected offers paste only", () => {
+  const h = setup();
+  h.call("openContextMenuAt", rightClick(new TestElement()));
+  assert.equal(h.state.contextMenu!.kind, "paste");
+  assert.deepEqual(labels(menuItems(h)), ["붙여넣기"]);
+});
+
+test("right-click on a group tab selects the group", () => {
+  const h = groupedSetup();
+  h.state.selected = ["c"];
+  h.call(
+    "openContextMenuAt",
+    rightClick(new TestElement(false, false, { groupId: "g" })),
+  );
+  assert.deepEqual(h.state.selected, ["a", "b"]);
+  assert.equal(h.state.contextMenu!.kind, "nodes");
+  h.state.selected = ["a", "b", "c"];
+  h.call(
+    "openContextMenuAt",
+    rightClick(new TestElement(false, false, { groupId: "g" })),
+  );
+  assert.deepEqual(h.state.selected, ["a", "b", "c"]);
+});
+
+test("right-click in a field with selected text opens the text menu", () => {
+  const h = setup(["a"]);
+  const field = Object.assign(new TestElement(true, true, { nodeId: "a" }), {
+    selectionStart: 0,
+    selectionEnd: 2,
+    value: "본문",
+  });
+  h.call("openContextMenuAt", rightClick(field));
+  assert.equal(h.state.contextMenu!.kind, "text");
+  assert.deepEqual(labels(menuItems(h)), ["잘라내기", "복사", "붙여넣기"]);
+});
+
+test("right-click in a node field with only a caret opens the node menu", () => {
+  const h = setup();
+  const field = Object.assign(new TestElement(true, true, { nodeId: "a" }), {
+    selectionStart: 1,
+    selectionEnd: 1,
+  });
+  h.call("openContextMenuAt", rightClick(field));
+  assert.equal(h.state.contextMenu!.kind, "nodes");
+  assert.deepEqual(h.state.selected, ["a"]);
+});
+
+test("right-click in an outside field without selected text opens nothing", () => {
+  const h = setup(["a"]);
+  const field = Object.assign(new TestElement(true, false), {
+    selectionStart: 0,
+    selectionEnd: 0,
+  });
+  const event = rightClick(field);
+  h.call("openContextMenuAt", event);
+  assert.equal(h.state.contextMenu ?? null, null);
+  assert.equal(event.defaultPrevented, true);
+});
+
+test("menu paste puts the clip at the right-click point", () => {
+  const h = setup(["a"]);
+  h.call("copySelection");
+  h.state.selected = [];
+  // 화면 (210,120) → 캔버스 (380,160)
+  h.call("openContextMenuAt", rightClick(new TestElement()));
+  h.call("runMenuAction", "paste");
+  // a(320x220) 가운데 → (220,50)
+  assert.deepEqual(h.state.history.present.nodes.at(-1)!.position, {
+    x: 220,
+    y: 50,
+  });
+  assert.equal(h.state.history.past.length, 1);
+});
+
+test("menu key with nothing selected opens paste at the view center", () => {
+  const h = setup();
+  h.call("handleWorkspaceKeyDown", key("ContextMenu"));
+  assert.equal(h.state.contextMenu!.kind, "paste");
+  assert.equal(h.state.contextMenu!.left, 500);
+  assert.equal(h.state.contextMenu!.top, 350);
+  assert.deepEqual(h.state.contextMenu!.point, { x: 980, y: 660 });
+});
+
+test("no menu while drawing or during a gesture", () => {
+  const h = setup(["a"]);
+  h.state.tool = "pen";
+  const event = rightClick(new TestElement(false, true, { nodeId: "a" }));
+  h.call("openContextMenuAt", event);
+  assert.equal(h.state.contextMenu ?? null, null);
+  assert.equal(event.defaultPrevented, true);
+  const g = setup(["a"]);
+  g.gestureRef.current = { kind: "pan" };
+  g.call("openContextMenuAt", rightClick(new TestElement()));
+  assert.equal(g.state.contextMenu ?? null, null);
+});
+
+test("menu cut removes the selection in one undo step", () => {
+  const h = setup(["a"]);
+  h.call(
+    "openContextMenuAt",
+    rightClick(new TestElement(false, true, { nodeId: "a" })),
+  );
+  h.call("runMenuAction", "cut");
+  assert.equal(h.state.history.present.nodes.length, 2);
+  assert.equal(h.state.history.past.length, 1);
+  assert.equal(h.state.clip!.nodes[0].id, "a");
 });
