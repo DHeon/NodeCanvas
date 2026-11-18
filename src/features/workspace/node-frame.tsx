@@ -26,6 +26,8 @@ const labels = { top: "위쪽", right: "오른쪽", bottom: "아래쪽", left: "
 export type NodeFrameProps = {
   node: WorkspaceNode;
   selected: boolean;
+  /** 선택 테두리를 보일지. 통째로 고른 그룹의 멤버는 그룹 영역이 대신 표시해 false. 기본은 selected. */
+  showSelection?: boolean;
   zoom: number;
   showPorts: boolean;
   activePort: ConnectionSide | null;
@@ -62,6 +64,7 @@ export type NodeFrameProps = {
 export default function NodeFrame({
   node,
   selected,
+  showSelection = selected,
   zoom,
   showPorts,
   activePort,
@@ -127,7 +130,7 @@ export default function NodeFrame({
         }
         onSelect(node.id, event.shiftKey);
       }}
-      className={`group/node absolute flex flex-col rounded-xl border bg-white transition-[box-shadow,border-color,opacity] duration-150 outline-none motion-reduce:transition-none ${selected ? "border-moss-deep shadow-card-selected" : "border-rule shadow-card hover:border-sage-hover hover:shadow-card-lift"} ${searchState === "dimmed" ? "opacity-25" : ""} ${highlighted ? "search-glow ring-2 ring-moss-deep ring-offset-2 ring-offset-field" : ""}`}
+      className={`group/node absolute flex flex-col rounded-xl border bg-white transition-[box-shadow,border-color,opacity] duration-150 outline-none motion-reduce:transition-none ${showSelection ? "border-moss-deep shadow-card-selected" : "border-rule shadow-card hover:border-sage-hover hover:shadow-card-lift"} ${searchState === "dimmed" ? "opacity-25" : ""} ${highlighted ? "search-glow ring-2 ring-moss-deep ring-offset-2 ring-offset-field" : ""}`}
       style={{
         left: node.position.x,
         top: node.position.y,

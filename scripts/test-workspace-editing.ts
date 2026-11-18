@@ -33,6 +33,7 @@ import {
 } from "../src/features/workspace/node-transform";
 import * as drawing from "../src/features/workspace/drawing";
 import * as groupOps from "../src/features/workspace/groups";
+import * as clipOps from "../src/features/workspace/node-clipboard";
 import {
   resolveWorkspacePath,
   updateWorkspaceAtPath,
@@ -321,8 +322,10 @@ const factory = new Function(
   "drawing",
   "connectSourcesToTarget",
   "groupOps",
+  "clipOps",
   `
   const { canJoinByDrag, groupAtPoint, joinGroup, groupNodes, ungroupNodes, renameGroup } = groupOps;
+  const { selectedGroupIds, makeClip, pasteClip } = clipOps;
   const setNodeMenu = value => { state.nodeMenu = value; };
   const { appendPoint, appendStroke, countDocumentDrawingPoints, eraseStrokes,
     exceedsDrawingLimits, simplifyPoints, MAX_DRAWING_POINTS, MAX_STROKES_PER_CANVAS } = drawing;
@@ -439,6 +442,7 @@ function setup(selected: string[] = []) {
         drawing,
         connectSourcesToTarget,
         groupOps,
+        clipOps,
       )[name](...args);
     },
   };
@@ -1775,4 +1779,23 @@ test("renaming a group is one undo step", () => {
   assert.equal(h.state.history.past.length, 1);
   h.call("undo");
   assert.equal(h.state.history.present.groups![0].title, "그룹");
+});
+
+test("Shift+tab click adds a group to the selection and removes it when already selected", () => {
+  const h = groupedSetup();
+  h.state.selected = ["c"];
+  h.call("startGroupDrag", pointer({ shiftKey: true }), "g");
+  assert.deepEqual([...h.state.selected].sort(), ["a", "b", "c"]);
+  h.call("endGesture", pointer({ type: "pointerup", buttons: 0 }));
+  h.gestureRef.current = null;
+  h.call("startGroupDrag", pointer({ shiftKey: true }), "g");
+  assert.deepEqual(h.state.selected, ["c"]);
+  assert.equal(h.gestureRef.current, null);
+});
+
+test("plain tab click still replaces the selection with the group", () => {
+  const h = groupedSetup();
+  h.state.selected = ["c"];
+  h.call("startGroupDrag", pointer(), "g");
+  assert.deepEqual(h.state.selected, ["a", "b"]);
 });

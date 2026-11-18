@@ -54,6 +54,7 @@ import {
   renameGroup,
   ungroupNodes,
 } from "./groups";
+import { selectedGroupIds } from "./node-clipboard";
 import NodeContextMenu from "./node-context-menu";
 import ConnectNodeMenu from "./connect-node-menu";
 import ConflictPanel from "./conflict-panel";
@@ -1337,6 +1338,23 @@ export default function Workspace({
     if (members.length === 0) return;
     event.preventDefault();
     event.stopPropagation();
+    if (event.shiftKey) {
+      // Shift: 이미 고른 그룹이면 선택에서 빼고, 아니면 지금 선택에 더해 함께 끈다.
+      if (selectedGroupIds(workspace, selectedNodeIds).includes(groupId)) {
+        const memberIds = new Set(members.map((item) => item.id));
+        setSelectedNodeIds(selectedNodeIds.filter((id) => !memberIds.has(id)));
+        viewportRef.current.focus({ preventScroll: true });
+        return;
+      }
+      beginNodeGesture(
+        event,
+        workspace.nodes.filter(
+          (item) =>
+            item.groupId === groupId || selectedNodeIds.includes(item.id),
+        ),
+      );
+      return;
+    }
     beginNodeGesture(event, members);
   }
 
@@ -2612,6 +2630,8 @@ export default function Workspace({
           .map((node) => node.id),
       )
     : undefined;
+  // 멤버 전부가 선택된 그룹: 노드 테두리 대신 그룹 영역에 선택 표시를 한다.
+  const wholeGroups = selectedGroupIds(workspace, selectedNodeIds);
   const viewerNode = workspace.nodes.find(
     (node): node is ImageNode & { image: ImageReference } =>
       node.id === viewerNodeId && node.type === "image_node" && !!node.image,
@@ -3000,6 +3020,7 @@ export default function Workspace({
             <GroupLayer
               document={workspace}
               joinTargetId={joinTargetId}
+              selectedGroupIds={wholeGroups}
               interactive={tool === "select"}
               onTabPointerDown={startGroupDrag}
               onSelectMembers={(groupId) => {
@@ -3030,6 +3051,9 @@ export default function Workspace({
             {workspace.nodes.map((node) => {
               const frame = {
                 selected: selectedNodeIds.includes(node.id),
+                showSelection:
+                  selectedNodeIds.includes(node.id) &&
+                  !(node.groupId && wholeGroups.includes(node.groupId)),
                 zoom: camera.zoom,
                 showPorts:
                   connectionDraft?.source.nodeId === node.id ||
