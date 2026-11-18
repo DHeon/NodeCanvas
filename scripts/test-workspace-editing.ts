@@ -212,6 +212,8 @@ const names = [
   "eraseAlong",
   "pickSearchResult",
   "focusNodeById",
+  "beginNodeGesture",
+  "startGroupDrag",
   "openTagLens",
 ];
 const functions = new Map<string, string>();
@@ -1561,4 +1563,41 @@ test("단축키: K는 체크리스트 노드를 추가한다", () => {
   const h = setup();
   h.call("handleWorkspaceKeyDown", key("k"));
   assert.deepEqual(h.state.calls, ["add:checklist_node"]);
+});
+
+function groupedSetup() {
+  const h = setup();
+  const base = fixture();
+  h.state.history = createWorkspaceHistory({
+    ...base,
+    groups: [{ id: "g", title: "그룹" }],
+    nodes: base.nodes.map((node) =>
+      node.id === "c" ? node : { ...node, groupId: "g" },
+    ),
+  } as WorkspaceDocument);
+  return h;
+}
+
+test("startGroupDrag selects members and moves them together in one undo step", () => {
+  const h = groupedSetup();
+  h.call("startGroupDrag", pointer(), "g");
+  assert.deepEqual(h.state.selected, ["a", "b"]);
+  // 화면 +40px, 배율 0.5 → 캔버스 +80
+  h.call("moveGesture", pointer({ clientX: 60, clientY: 40 }));
+  const position = (id: string) =>
+    h.state.history.present.nodes.find((node) => node.id === id)!.position;
+  assert.deepEqual(position("a"), { x: 180, y: 100 });
+  assert.deepEqual(position("b"), { x: 680, y: 400 });
+  assert.deepEqual(position("c"), { x: 1200, y: 700 });
+  h.call(
+    "endGesture",
+    pointer({ type: "pointerup", buttons: 0, clientX: 60, clientY: 40 }),
+  );
+  assert.equal(h.state.history.past.length, 1);
+});
+
+test("startGroupDrag on an empty group does nothing", () => {
+  const h = groupedSetup();
+  h.call("startGroupDrag", pointer(), "missing");
+  assert.equal(h.gestureRef.current, null);
 });

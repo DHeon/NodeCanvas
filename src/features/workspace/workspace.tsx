@@ -44,6 +44,8 @@ import {
   removeChecklistItem,
 } from "./checklist";
 import ChecklistNodeView from "./checklist-node-view";
+import GroupLayer from "./group-layer";
+import { renameGroup } from "./groups";
 import ConnectNodeMenu from "./connect-node-menu";
 import ConflictPanel from "./conflict-panel";
 import ImageViewer from "./image-viewer";
@@ -1285,7 +1287,30 @@ export default function Workspace({
     const draggedNodes = selectedNodeIds.includes(node.id)
       ? workspace.nodes.filter((item) => selectedNodeIds.includes(item.id))
       : [node];
+    beginNodeGesture(event, draggedNodes);
+  }
 
+  /** 그룹 이름 탭을 잡으면 멤버 모두를 선택하고 함께 끈다(노드 끌기와 같은 제스처). */
+  function startGroupDrag(
+    event: ReactPointerEvent<HTMLElement>,
+    groupId: string,
+  ) {
+    if (event.button !== 0 || gestureRef.current || !viewportRef.current)
+      return;
+    const members = workspace.nodes.filter((item) => item.groupId === groupId);
+    if (members.length === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    beginNodeGesture(event, members);
+  }
+
+  /** 노드들을 함께 끄는 제스처를 시작한다. 3px 넘게 움직이기 전까지는 클릭으로 남는다. */
+  function beginNodeGesture(
+    event: ReactPointerEvent<HTMLElement>,
+    draggedNodes: WorkspaceNode[],
+  ) {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
     viewport.focus({ preventScroll: true });
     dispatchHistory({ type: "begin" });
     gestureRef.current = {
@@ -2832,6 +2857,25 @@ export default function Workspace({
             <DrawingLayer
               strokes={workspace.drawing?.strokes ?? []}
               draft={drawDraft}
+            />
+            <GroupLayer
+              document={workspace}
+              joinTargetId={null}
+              interactive={tool === "select"}
+              onTabPointerDown={startGroupDrag}
+              onSelectMembers={(groupId) => {
+                setSelectedNodeIds(
+                  workspace.nodes
+                    .filter((item) => item.groupId === groupId)
+                    .map((item) => item.id),
+                );
+                setSelectedConnectionId(null);
+              }}
+              onRename={(groupId, title) =>
+                applyDocumentChange((root, path) =>
+                  renameGroup(root, path, groupId, title),
+                )
+              }
             />
             <ConnectionLayer
               canvas={workspace.canvas}
