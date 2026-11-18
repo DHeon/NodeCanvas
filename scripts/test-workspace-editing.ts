@@ -218,6 +218,8 @@ const names = [
   "groupSelection",
   "ungroupSelection",
   "openNodeMenuForSelection",
+  "openNodeMenuAt",
+  "applyDocumentChange",
   "openTagLens",
 ];
 const functions = new Map<string, string>();
@@ -320,7 +322,7 @@ const factory = new Function(
   "connectSourcesToTarget",
   "groupOps",
   `
-  const { canJoinByDrag, groupAtPoint, joinGroup, groupNodes, ungroupNodes } = groupOps;
+  const { canJoinByDrag, groupAtPoint, joinGroup, groupNodes, ungroupNodes, renameGroup } = groupOps;
   const setNodeMenu = value => { state.nodeMenu = value; };
   const { appendPoint, appendStroke, countDocumentDrawingPoints, eraseStrokes,
     exceedsDrawingLimits, simplifyPoints, MAX_DRAWING_POINTS, MAX_STROKES_PER_CANVAS } = drawing;
@@ -1718,4 +1720,59 @@ test("context menu key and Shift+F10 open the node menu for the selection", () =
   const empty = setup();
   empty.call("handleWorkspaceKeyDown", key("ContextMenu"));
   assert.equal(empty.state.nodeMenu ?? null, null);
+});
+
+test("grouping and ungrouping return focus to the canvas", () => {
+  const h = setup(["a", "c"]);
+  const before = h.state.focusCount;
+  h.call("handleWorkspaceKeyDown", key("g"));
+  assert.equal(h.state.focusCount, before + 1);
+  h.call("handleWorkspaceKeyDown", key("G", { shiftKey: true }));
+  assert.equal(h.state.focusCount, before + 2);
+});
+
+test("right-click selects the node unless it is already selected", () => {
+  const h = setup(["b"]);
+  const event = (nodeId: string | null) => ({
+    clientX: 210,
+    clientY: 120,
+    target: new TestElement(false, nodeId !== null, nodeId ? { nodeId } : {}),
+    preventDefault() {},
+  });
+  h.call("openNodeMenuAt", event("a"));
+  assert.deepEqual(h.state.selected, ["a"]);
+  assert.deepEqual(h.state.nodeMenu, { left: 200, top: 100 });
+
+  h.state.selected = ["b", "c"];
+  h.state.nodeMenu = null;
+  h.call("openNodeMenuAt", event("c"));
+  assert.deepEqual(h.state.selected, ["b", "c"]);
+  assert.ok(h.state.nodeMenu);
+
+  h.state.nodeMenu = null;
+  h.call("openNodeMenuAt", event(null));
+  assert.equal(h.state.nodeMenu ?? null, null);
+});
+
+test("tab drag stops the whole group at the finite canvas edge", () => {
+  const h = groupedSetup();
+  h.call("startGroupDrag", pointer(), "g");
+  // 화면 +1000px = 캔버스 +2000, 오른쪽 끝(b 800 → 2000)에서 +1200으로 멈춘다.
+  h.call("moveGesture", pointer({ clientX: 1020, clientY: 40 }));
+  const x = (id: string) =>
+    h.state.history.present.nodes.find((node) => node.id === id)!.position.x;
+  assert.equal(x("a"), 1300);
+  assert.equal(x("b"), 1800);
+  assert.equal(x("b") - x("a"), 500);
+});
+
+test("renaming a group is one undo step", () => {
+  const h = groupedSetup();
+  h.call("applyDocumentChange", (root: WorkspaceDocument, path: string[]) =>
+    groupOps.renameGroup(root, path, "g", "회의"),
+  );
+  assert.equal(h.state.history.present.groups![0].title, "회의");
+  assert.equal(h.state.history.past.length, 1);
+  h.call("undo");
+  assert.equal(h.state.history.present.groups![0].title, "그룹");
 });

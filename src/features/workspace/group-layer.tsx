@@ -37,10 +37,20 @@ export default function GroupLayer({
     null,
   );
 
-  function commit() {
+  /** 이름 입력이 사라진 뒤 그 그룹의 탭으로 포커스를 돌린다(키보드로 끝냈을 때만). */
+  function refocusTab(groupId: string) {
+    requestAnimationFrame(() =>
+      globalThis.document
+        .querySelector<HTMLElement>(`[data-group-id="${groupId}"] button`)
+        ?.focus({ preventScroll: true }),
+    );
+  }
+
+  function commit(fromKeyboard = false) {
     if (!editing) return;
     onRename(editing.id, editing.text);
     setEditing(null);
+    if (fromKeyboard) refocusTab(editing.id);
   }
 
   return (
@@ -79,17 +89,18 @@ export default function GroupLayer({
                   onChange={(event) =>
                     setEditing({ id: group.id, text: event.target.value })
                   }
-                  onBlur={commit}
+                  onBlur={() => commit()}
                   onKeyDown={(event) => {
                     event.stopPropagation();
                     if (event.nativeEvent.isComposing || event.keyCode === 229)
                       return;
                     if (event.key === "Enter") {
                       event.preventDefault();
-                      commit();
+                      commit(true);
                     } else if (event.key === "Escape") {
                       event.preventDefault();
                       setEditing(null);
+                      refocusTab(group.id);
                     }
                   }}
                   className="h-full min-w-24 rounded-t-lg border border-b-0 border-moss-deep bg-white px-3 text-[13px] text-bark outline-none"

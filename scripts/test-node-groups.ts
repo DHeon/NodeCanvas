@@ -12,6 +12,7 @@ import {
   ungroupNodes,
   visibleGroups,
 } from "../src/features/workspace/groups";
+import { duplicateNodes } from "../src/features/workspace/node-clone";
 import type {
   WorkspaceDocument,
   WorkspaceNode,
@@ -280,4 +281,19 @@ test("renameGroup trims and falls back to 그룹", () => {
     40,
   );
   valid(renamed);
+});
+
+test("groupNodes on a whole existing group keeps it as is", () => {
+  const { document, g, a, b } = fixture();
+  const result = groupNodes(document, [], [a.id, b.id], randomUUID);
+  assert.ok("document" in result);
+  assert.equal(result.document, document);
+  assert.equal(result.groupId, g);
+});
+
+test("duplicated members stay in the same group", () => {
+  const { document, g, a } = fixture();
+  const copies = duplicateNodes(document, [a.id], 24);
+  assert.equal(copies.nodes[0].groupId, g);
+  valid({ ...document, nodes: [...document.nodes, ...copies.nodes] });
 });

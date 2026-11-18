@@ -2067,6 +2067,8 @@ export default function Workspace({
         return "document" in result ? result.document : root;
       },
     });
+    // 포커스가 있던 탭이 사라질 수 있으니 캔버스로 돌려 단축키가 계속 들어오게 한다.
+    viewportRef.current?.focus({ preventScroll: true });
   }
 
   /** 선택한 노드를 그룹에서 뺀다(실행 취소 한 단계). */
@@ -2079,6 +2081,7 @@ export default function Workspace({
       type: "change",
       update: (root) => ungroupNodes(root, path, nodeIds),
     });
+    viewportRef.current?.focus({ preventScroll: true });
   }
 
   /** 키보드로 메뉴를 열 때: 선택한 첫 노드의 왼쪽 위 근처(뷰포트 기준). */

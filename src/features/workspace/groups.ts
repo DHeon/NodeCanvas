@@ -103,9 +103,22 @@ export function groupNodes(
 ): { document: WorkspaceDocument; groupId: string } | { error: string } {
   const ids = new Set(nodeIds);
   let error: string | null = null;
+  let existing: string | null = null;
   const groupId = makeId();
   const document = updateWorkspaceAtPath(root, path, (current) => {
-    if (!current.nodes.some((node) => ids.has(node.id))) return current;
+    const selected = current.nodes.filter((node) => ids.has(node.id));
+    if (selected.length === 0) return current;
+    // 이미 한 그룹의 멤버 전부를 고른 경우는 그대로 둔다(이름이 "그룹"으로 바뀌지 않게).
+    const shared = selected[0].groupId;
+    if (
+      shared &&
+      selected.every((node) => node.groupId === shared) &&
+      current.nodes.filter((node) => node.groupId === shared).length ===
+        selected.length
+    ) {
+      existing = shared;
+      return current;
+    }
     // 옮겨오며 비게 될 그룹을 먼저 빼고 한도를 센다.
     const nodes = current.nodes.map((node) =>
       ids.has(node.id) ? { ...node, groupId } : node,
@@ -124,6 +137,7 @@ export function groupNodes(
     };
   });
   if (error) return { error };
+  if (existing) return { document, groupId: existing };
   return { document, groupId };
 }
 
