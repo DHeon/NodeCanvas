@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  copiesNodes,
   focusAfterRemoval,
   spaceBelongsToControl,
   startsTitleEdit,
@@ -105,4 +106,27 @@ test("항목을 지운 뒤 포커스는 다음 항목, 없으면 앞 항목, 없
   assert.equal(focusAfterRemoval(["a", "b", "c"], "c"), "b");
   assert.equal(focusAfterRemoval(["a"], "a"), null);
   assert.equal(focusAfterRemoval(["a", "b"], "x"), null);
+});
+
+/** 선택 범위를 가진 글 칸 흉내. */
+const field = (start: number, end: number, ...parts: string[]) =>
+  Object.assign(el("textarea", ...parts), {
+    selectionStart: start,
+    selectionEnd: end,
+  });
+
+test("copiesNodes: canvas targets copy nodes", () => {
+  assert.equal(copiesNodes(el("[data-node-id]") as never), true);
+  assert.equal(copiesNodes(el() as never), true);
+  assert.equal(copiesNodes(null), true);
+});
+
+test("copiesNodes: a node field copies the node only without selected text", () => {
+  assert.equal(copiesNodes(field(3, 3, "[data-node-id]") as never), true);
+  assert.equal(copiesNodes(field(0, 2, "[data-node-id]") as never), false);
+});
+
+test("copiesNodes: fields outside nodes always keep the text", () => {
+  assert.equal(copiesNodes(field(3, 3) as never), false);
+  assert.equal(copiesNodes(field(0, 2) as never), false);
 });

@@ -290,3 +290,6 @@ export function appendStroke(
     drawing: { strokes: [...(document.drawing?.strokes ?? []), stroke] },
   };
 }
+
+/** 그림 한도에 걸렸을 때 알림 문구. */
+export const DRAWING_LIMIT_NOTICE = `그림은 한 공간에 선 ${MAX_STROKES_PER_CANVAS.toLocaleString()}개, 프로젝트 전체에 점 ${(MAX_DRAWING_POINTS / 10000).toLocaleString()}만 개까지 그릴 수 있어요.`;

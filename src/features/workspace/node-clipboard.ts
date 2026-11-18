@@ -3,6 +3,7 @@ import { MAX_CONNECTIONS } from "./connections";
 import {
   countDocumentDrawingPoints,
   countNodesDrawingPoints,
+  DRAWING_LIMIT_NOTICE,
   MAX_DRAWING_POINTS,
 } from "./drawing";
 import { groupAtPoint, MAX_GROUPS_PER_CANVAS } from "./groups";
@@ -35,6 +36,14 @@ export type NodeClip = {
 };
 
 export type PasteError = "nodes" | "drawing" | "groups" | "depth";
+
+/** 붙여넣기를 거절했을 때 알림 문구. */
+export const PASTE_ERROR_NOTICES: Record<PasteError, string> = {
+  nodes: `노드는 프로젝트 전체에서 ${MAX_WORKSPACE_NODES}개까지 만들 수 있어요.`,
+  drawing: DRAWING_LIMIT_NOTICE,
+  groups: `그룹은 공간마다 ${MAX_GROUPS_PER_CANVAS}개까지 만들 수 있어요.`,
+  depth: `작업 공간은 ${MAX_CANVAS_DEPTH}단계까지 넣을 수 있어요.`,
+};
 
 /** 멤버가 1개 이상이고 멤버 전부가 선택된 그룹들(문서의 그룹 순서). */
 export function selectedGroupIds(

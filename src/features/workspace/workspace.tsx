@@ -37,7 +37,11 @@ import {
 } from "./search";
 import SearchPanel from "./search-panel";
 import { roleForConnectedNode, setRole, setTodoDone } from "./roles";
-import { spaceBelongsToControl, wheelStaysInRegion } from "./keyboard-targets";
+import {
+  copiesNodes,
+  spaceBelongsToControl,
+  wheelStaysInRegion,
+} from "./keyboard-targets";
 import {
   addChecklistItem,
   buildChecklist,
@@ -54,7 +58,13 @@ import {
   renameGroup,
   ungroupNodes,
 } from "./groups";
-import { selectedGroupIds } from "./node-clipboard";
+import {
+  makeClip,
+  pasteClip,
+  PASTE_ERROR_NOTICES,
+  selectedGroupIds,
+  type NodeClip,
+} from "./node-clipboard";
 import NodeContextMenu from "./node-context-menu";
 import ConnectNodeMenu from "./connect-node-menu";
 import ConflictPanel from "./conflict-panel";
@@ -97,6 +107,7 @@ import {
   countNodesDrawingPoints,
   exceedsDrawingLimits,
   countDocumentDrawingPoints,
+  DRAWING_LIMIT_NOTICE,
   eraseStrokes,
   MAX_DRAWING_POINTS,
   MAX_STROKES_PER_CANVAS,
@@ -229,7 +240,6 @@ type Gesture =
 // 화면 기준 거리. 캔버스 단위로는 zoom으로 나눈다.
 const DRAW_MIN_DISTANCE = 1.5;
 const ERASER_RADIUS = 10;
-const DRAWING_LIMIT_NOTICE = `그림은 한 공간에 선 ${MAX_STROKES_PER_CANVAS.toLocaleString()}개, 프로젝트 전체에 점 ${(MAX_DRAWING_POINTS / 10000).toLocaleString()}만 개까지 그릴 수 있어요.`;
 
 type SelectionRect = Point & { width: number; height: number };
 
@@ -364,6 +374,12 @@ export default function Workspace({
   const [eraserPointer, setEraserPointer] = useState<Point | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  /** 앱 안 클립보드(같은 탭). 새로고침하면 사라진다. */
+  const clipboardRef = useRef<NodeClip | null>(null);
+  /** 뷰포트 위 마지막 포인터(화면 좌표). 밖으로 나가면 null — Ctrl+V 붙일 자리. */
+  const lastPointerRef = useRef<{ clientX: number; clientY: number } | null>(
+    null,
+  );
   const imageTargetRef = useRef<{ nodeId: string; path: string[] } | null>(
     null,
   );
@@ -2280,6 +2296,17 @@ export default function Workspace({
     const file = Array.from(event.clipboardData.files).find((file) =>
       file.type.startsWith("image/"),
     );
+    // 시스템 클립보드의 글이 복사해 둔 노드의 글과 같으면(= 마지막 복사가 노드) 노드를 붙인다.
+    const clip = clipboardRef.current;
+    if (!file && clip) {
+      const plain = (value: string) => value.replace(/\r\n/g, "\n").trim();
+      const text = event.clipboardData.getData("text/plain");
+      if (!clip.systemSynced || plain(text) === plain(clip.text)) {
+        event.preventDefault();
+        pasteAt(pastePoint());
+        return;
+      }
+    }
     if (!file) {
       // 웹 주소 하나를 붙여넣으면 링크 노드로 만든다.
       // 일반 글을 붙여넣은 것과 구분하려고 http(s)://로 시작하는 주소만 받는다.
@@ -2300,6 +2327,75 @@ export default function Workspace({
       selected?.type === "image_node" ? selected.id : addNode("image_node");
     if (nodeId)
       void imageUploads.upload(nodeId, file, canvasPath.slice(0, activeDepth));
+  }
+
+  /** 선택한 노드를 앱 클립보드에 담는다. 담은 묶음(없으면 null). */
+  function copySelection(): NodeClip | null {
+    if (gestureRef.current || !selectedNodeIds.length) return null;
+    const clip = makeClip(workspace, selectedNodeIds);
+    if (clip) clipboardRef.current = clip;
+    return clip;
+  }
+
+  /** 복사한 뒤 지운다. 지우기가 실행 취소 한 단계이고, 클립보드는 남는다. */
+  function cutSelection() {
+    if (copySelection()) deleteSelection();
+  }
+
+  /** Ctrl+V가 붙일 자리: 뷰포트 위 마지막 포인터, 없으면 화면 가운데(캔버스 좌표). */
+  function pastePoint(): Point {
+    const pointer = lastPointerRef.current;
+    if (pointer)
+      return getCanvasPoint(pointer.clientX, pointer.clientY) ?? { x: 0, y: 0 };
+    const viewport = viewportRef.current;
+    if (!viewport) return { x: 0, y: 0 };
+    const rect = viewport.getBoundingClientRect();
+    return {
+      x: (rect.width / 2 - camera.x) / camera.zoom,
+      y: (rect.height / 2 - camera.y) / camera.zoom,
+    };
+  }
+
+  /** 앱 클립보드를 point(캔버스 좌표)에 붙인다. 실행 취소 한 단계. */
+  function pasteAt(point: Point) {
+    const clip = clipboardRef.current;
+    if (!clip || gestureRef.current) return;
+    const result = pasteClip(
+      rootDocument,
+      canvasPath.slice(0, activeDepth),
+      clip,
+      point,
+    );
+    if ("error" in result) {
+      setNotice(PASTE_ERROR_NOTICES[result.error]);
+      return;
+    }
+    dispatchHistory({ type: "commit" });
+    dispatchHistory({ type: "change", update: () => result.document });
+    setSelectedNodeIds(result.nodeIds);
+    setSelectedConnectionId(null);
+    viewportRef.current?.focus({ preventScroll: true });
+  }
+
+  /** Ctrl+C: 캔버스(또는 고른 글자가 없는 노드 안 글 칸)에서는 노드를 복사한다. */
+  function handleCopy(event: ReactClipboardEvent<HTMLElement>) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!copiesNodes(target)) return;
+    const clip = copySelection();
+    if (!clip) return;
+    event.clipboardData.setData("text/plain", clip.text);
+    event.preventDefault();
+  }
+
+  /** Ctrl+X: 복사와 같은 규칙으로 노드를 잘라낸다. */
+  function handleCut(event: ReactClipboardEvent<HTMLElement>) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!copiesNodes(target)) return;
+    const clip = copySelection();
+    if (!clip) return;
+    event.clipboardData.setData("text/plain", clip.text);
+    event.preventDefault();
+    deleteSelection();
   }
 
   /** 링크 노드의 주소를 정하고 서버에 미리보기를 요청한다. */
@@ -2650,6 +2746,8 @@ export default function Workspace({
       className="chrome-no-select fixed inset-0 flex flex-col bg-mist-deep text-bark caret-ink [color-scheme:light]"
       onKeyDown={handleWorkspaceKeyDown}
       onPaste={handlePaste}
+      onCopy={handleCopy}
+      onCut={handleCut}
     >
       <input
         ref={fileInputRef}
@@ -2986,11 +3084,18 @@ export default function Workspace({
           onPointerDownCapture={startPan}
           onPointerDown={tool === "select" ? startMarquee : startDrawing}
           onPointerMove={(event) => {
+            lastPointerRef.current = {
+              clientX: event.clientX,
+              clientY: event.clientY,
+            };
             if (tool === "eraser")
               setEraserPointer({ x: event.clientX, y: event.clientY });
             moveGesture(event);
           }}
-          onPointerLeave={() => setEraserPointer(null)}
+          onPointerLeave={() => {
+            lastPointerRef.current = null;
+            setEraserPointer(null);
+          }}
           onContextMenu={openNodeMenuAt}
           onPointerUp={endGesture}
           onPointerCancel={endGesture}

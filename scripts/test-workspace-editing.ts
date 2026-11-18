@@ -34,6 +34,7 @@ import {
 import * as drawing from "../src/features/workspace/drawing";
 import * as groupOps from "../src/features/workspace/groups";
 import * as clipOps from "../src/features/workspace/node-clipboard";
+import * as keyTargets from "../src/features/workspace/keyboard-targets";
 import {
   resolveWorkspacePath,
   updateWorkspaceAtPath,
@@ -222,6 +223,13 @@ const names = [
   "openNodeMenuAt",
   "applyDocumentChange",
   "openTagLens",
+  "copySelection",
+  "cutSelection",
+  "pastePoint",
+  "pasteAt",
+  "handleCopy",
+  "handleCut",
+  "handlePaste",
 ];
 const functions = new Map<string, string>();
 let clearGesture = "";
@@ -301,6 +309,8 @@ type TestState = {
   searchQuery?: string;
   debouncedQuery?: string;
   pendingFocus?: { key: string; nodeId: string } | null;
+  clip?: clipOps.NodeClip | null;
+  lastPointer?: { clientX: number; clientY: number } | null;
 };
 type Handlers = Record<string, (...args: unknown[]) => void>;
 const factory = new Function(
@@ -323,9 +333,22 @@ const factory = new Function(
   "connectSourcesToTarget",
   "groupOps",
   "clipOps",
+  "keyTargets",
   `
   const { canJoinByDrag, groupAtPoint, joinGroup, groupNodes, ungroupNodes, renameGroup } = groupOps;
-  const { selectedGroupIds, makeClip, pasteClip } = clipOps;
+  const { selectedGroupIds, makeClip, pasteClip, PASTE_ERROR_NOTICES } = clipOps;
+  const { copiesNodes } = keyTargets;
+  const clipboardRef = {
+    get current() { return state.clip ?? null; },
+    set current(value) { state.clip = value; },
+  };
+  const lastPointerRef = {
+    get current() { return state.lastPointer ?? null; },
+    set current(value) { state.lastPointer = value; },
+  };
+  const normalizeLinkUrl = url => url;
+  const setLinkUrl = () => { state.calls.push("link-url"); };
+  const imageUploads = { upload: () => { state.calls.push("upload"); } };
   const setNodeMenu = value => { state.nodeMenu = value; };
   const { appendPoint, appendStroke, countDocumentDrawingPoints, eraseStrokes,
     exceedsDrawingLimits, simplifyPoints, MAX_DRAWING_POINTS, MAX_STROKES_PER_CANVAS } = drawing;
@@ -443,6 +466,7 @@ function setup(selected: string[] = []) {
         connectSourcesToTarget,
         groupOps,
         clipOps,
+        keyTargets,
       )[name](...args);
     },
   };
@@ -1798,4 +1822,164 @@ test("plain tab click still replaces the selection with the group", () => {
   h.state.selected = ["c"];
   h.call("startGroupDrag", pointer(), "g");
   assert.deepEqual(h.state.selected, ["a", "b"]);
+});
+
+// ── 복사·잘라내기·붙여넣기 ──
+function clipboardData(text = "", files: unknown[] = []) {
+  const data: Record<string, string> = { "text/plain": text };
+  return {
+    files,
+    data,
+    getData: (type: string) => data[type] ?? "",
+    setData: (type: string, value: string) => {
+      data[type] = value;
+    },
+  };
+}
+function clipEvent(target: unknown, data = clipboardData()) {
+  return {
+    target,
+    clipboardData: data,
+    defaultPrevented: false,
+    preventDefault() {
+      this.defaultPrevented = true;
+    },
+  };
+}
+const nodeField = (start: number, end: number) =>
+  Object.assign(new TestElement(true, true, { nodeId: "a" }), {
+    selectionStart: start,
+    selectionEnd: end,
+  });
+const outsideField = () =>
+  Object.assign(new TestElement(true, false), {
+    selectionStart: 0,
+    selectionEnd: 0,
+  });
+
+test("Ctrl+C on the canvas copies the selection and writes its text", () => {
+  const h = setup(["a"]);
+  const event = clipEvent(new TestElement());
+  h.call("handleCopy", event);
+  assert.equal(h.state.clip!.nodes[0].title, "A");
+  assert.equal(event.clipboardData.data["text/plain"], "A\n본문");
+  assert.equal(event.defaultPrevented, true);
+  assert.equal(h.state.history.past.length, 0);
+});
+
+test("copy in a node text field with selected text leaves it to the browser", () => {
+  const h = setup(["a"]);
+  const event = clipEvent(nodeField(0, 2));
+  h.call("handleCopy", event);
+  assert.equal(h.state.clip ?? null, null);
+  assert.equal(event.defaultPrevented, false);
+});
+
+test("copy in a node text field with only a caret copies the node", () => {
+  const h = setup(["a"]);
+  h.call("handleCopy", clipEvent(nodeField(2, 2)));
+  assert.equal(h.state.clip!.nodes.length, 1);
+});
+
+test("copy in a text field outside nodes never copies nodes", () => {
+  const h = setup(["a"]);
+  const event = clipEvent(outsideField());
+  h.call("handleCopy", event);
+  assert.equal(h.state.clip ?? null, null);
+  assert.equal(event.defaultPrevented, false);
+});
+
+test("copy with nothing selected keeps the browser default", () => {
+  const h = setup([]);
+  const event = clipEvent(new TestElement());
+  h.call("handleCopy", event);
+  assert.equal(h.state.clip ?? null, null);
+  assert.equal(event.defaultPrevented, false);
+});
+
+test("cut copies then deletes in one undo step and undo keeps the clip", () => {
+  const h = setup(["a"]);
+  h.call("handleCut", clipEvent(new TestElement()));
+  assert.equal(h.state.history.present.nodes.length, 2);
+  assert.equal(h.state.history.past.length, 1);
+  h.call("undo");
+  assert.equal(h.state.history.present.nodes.length, 3);
+  assert.equal(h.state.clip!.nodes[0].id, "a");
+});
+
+test("paste of the same text pastes nodes at the last pointer, one undo step", () => {
+  const h = setup(["a"]);
+  h.call("handleCopy", clipEvent(new TestElement()));
+  h.state.lastPointer = { clientX: 110, clientY: 120 };
+  // 캔버스 (180,160)에 a(320x220)의 가운데 → (20,50)
+  h.call(
+    "handlePaste",
+    clipEvent(new TestElement(), clipboardData("A\r\n본문")),
+  );
+  const present = h.state.history.present;
+  assert.equal(present.nodes.length, 4);
+  assert.deepEqual(h.state.selected.length, 1);
+  assert.notEqual(h.state.selected[0], "a");
+  assert.deepEqual(present.nodes.at(-1)!.position, { x: 20, y: 50 });
+  assert.equal(h.state.history.past.length, 1);
+});
+
+test("paste with different text falls back to the link node path", () => {
+  const h = setup(["a"]);
+  h.call("handleCopy", clipEvent(new TestElement()));
+  h.call(
+    "handlePaste",
+    clipEvent(new TestElement(), clipboardData("https://example.com")),
+  );
+  assert.ok(h.state.calls.includes("add:link_node"));
+  assert.equal(h.state.history.present.nodes.length, 3);
+});
+
+test("paste after a failed system write still pastes nodes", () => {
+  const h = setup(["a"]);
+  h.call("handleCopy", clipEvent(new TestElement()));
+  h.state.clip = { ...h.state.clip!, systemSynced: false };
+  h.call("handlePaste", clipEvent(new TestElement(), clipboardData("다른 글")));
+  assert.equal(h.state.history.present.nodes.length, 4);
+});
+
+test("paste without a pointer uses the view center", () => {
+  const h = setup(["a"]);
+  h.call("handleCopy", clipEvent(new TestElement()));
+  h.state.lastPointer = null;
+  h.call("handlePaste", clipEvent(new TestElement(), clipboardData("A\n본문")));
+  // 화면 가운데 (500,350) → 캔버스 (980,660), a 가운데 → (820,550)
+  assert.deepEqual(h.state.history.present.nodes.at(-1)!.position, {
+    x: 820,
+    y: 550,
+  });
+});
+
+test("paste into a text field is left to the browser", () => {
+  const h = setup(["a"]);
+  h.call("handleCopy", clipEvent(new TestElement()));
+  const event = clipEvent(nodeField(0, 0), clipboardData("A\n본문"));
+  h.call("handlePaste", event);
+  assert.equal(h.state.history.present.nodes.length, 3);
+  assert.equal(event.defaultPrevented, false);
+});
+
+test("paste over the node limit shows the notice and changes nothing", () => {
+  const h = setup(["a"]);
+  h.call("handleCopy", clipEvent(new TestElement()));
+  const base = fixture();
+  h.state.history = createWorkspaceHistory({
+    ...base,
+    nodes: Array.from({ length: 1000 }, (_, index) => ({
+      ...base.nodes[1],
+      id: `n${index}`,
+    })),
+  });
+  h.call("pasteAt", { x: 100, y: 100 });
+  assert.equal(h.state.history.present.nodes.length, 1000);
+  assert.ok(
+    h.state.calls.includes(
+      "notice:노드는 프로젝트 전체에서 1000개까지 만들 수 있어요.",
+    ),
+  );
 });
