@@ -215,6 +215,9 @@ const names = [
   "focusNodeById",
   "beginNodeGesture",
   "startGroupDrag",
+  "groupSelection",
+  "ungroupSelection",
+  "openNodeMenuForSelection",
   "openTagLens",
 ];
 const functions = new Map<string, string>();
@@ -290,6 +293,7 @@ type TestState = {
   canvasPath?: string[];
   searchActive?: number | null;
   joinTarget?: string | null;
+  nodeMenu?: { left: number; top: number } | null;
   searchOpen?: boolean;
   searchQuery?: string;
   debouncedQuery?: string;
@@ -316,7 +320,8 @@ const factory = new Function(
   "connectSourcesToTarget",
   "groupOps",
   `
-  const { canJoinByDrag, groupAtPoint, joinGroup } = groupOps;
+  const { canJoinByDrag, groupAtPoint, joinGroup, groupNodes, ungroupNodes } = groupOps;
+  const setNodeMenu = value => { state.nodeMenu = value; };
   const { appendPoint, appendStroke, countDocumentDrawingPoints, eraseStrokes,
     exceedsDrawingLimits, simplifyPoints, MAX_DRAWING_POINTS, MAX_STROKES_PER_CANVAS } = drawing;
   const ERASER_RADIUS = 10;
@@ -1670,4 +1675,47 @@ test("cancelled drag does not join", () => {
     pointer({ type: "pointercancel", buttons: 0, ...insideGroup }),
   );
   assert.equal(groupOf(h, "c"), undefined);
+});
+
+test("G groups the selection in one undo step", () => {
+  const h = setup(["a", "c"]);
+  h.call("handleWorkspaceKeyDown", key("g"));
+  const nodes = h.state.history.present.nodes;
+  const groupId = nodes.find((node) => node.id === "a")!.groupId;
+  assert.ok(groupId);
+  assert.equal(nodes.find((node) => node.id === "c")!.groupId, groupId);
+  assert.equal(nodes.find((node) => node.id === "b")!.groupId, undefined);
+  assert.deepEqual(
+    h.state.history.present.groups?.map((group) => group.title),
+    ["그룹"],
+  );
+  assert.equal(h.state.history.past.length, 1);
+});
+
+test("Shift+G ungroups only the selected members", () => {
+  const h = groupedSetup();
+  h.state.selected = ["a"];
+  h.call("handleWorkspaceKeyDown", key("G", { shiftKey: true }));
+  assert.equal(groupOf(h, "a"), undefined);
+  assert.equal(groupOf(h, "b"), "g");
+  assert.equal(h.state.history.past.length, 1);
+});
+
+test("G with nothing selected does nothing", () => {
+  const h = setup();
+  h.call("handleWorkspaceKeyDown", key("g"));
+  assert.equal(h.state.history.past.length, 0);
+  assert.equal(h.state.history.present.groups, undefined);
+});
+
+test("context menu key and Shift+F10 open the node menu for the selection", () => {
+  const h = setup(["b"]);
+  h.call("handleWorkspaceKeyDown", key("ContextMenu"));
+  assert.ok(h.state.nodeMenu);
+  h.state.nodeMenu = null;
+  h.call("handleWorkspaceKeyDown", key("F10", { shiftKey: true }));
+  assert.ok(h.state.nodeMenu);
+  const empty = setup();
+  empty.call("handleWorkspaceKeyDown", key("ContextMenu"));
+  assert.equal(empty.state.nodeMenu ?? null, null);
 });

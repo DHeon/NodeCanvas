@@ -15,6 +15,7 @@ import {
 import { v4 as uuidv4 } from "uuid";
 import type {
   KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
   ClipboardEvent as ReactClipboardEvent,
 } from "react";
@@ -45,7 +46,15 @@ import {
 } from "./checklist";
 import ChecklistNodeView from "./checklist-node-view";
 import GroupLayer from "./group-layer";
-import { canJoinByDrag, groupAtPoint, joinGroup, renameGroup } from "./groups";
+import {
+  canJoinByDrag,
+  groupAtPoint,
+  groupNodes,
+  joinGroup,
+  renameGroup,
+  ungroupNodes,
+} from "./groups";
+import NodeContextMenu from "./node-context-menu";
 import ConnectNodeMenu from "./connect-node-menu";
 import ConflictPanel from "./conflict-panel";
 import ImageViewer from "./image-viewer";
@@ -436,6 +445,11 @@ export default function Workspace({
   const [connectMenu, setConnectMenu] = useState<ConnectMenuState | null>(null);
   // 노드를 끄는 동안 커서 아래에 있어 놓으면 들어갈 그룹(진하게 표시).
   const [joinTargetId, setJoinTargetId] = useState<string | null>(null);
+  // 노드 우클릭(메뉴 키) 메뉴 위치. 뷰포트 기준.
+  const [nodeMenu, setNodeMenu] = useState<{
+    left: number;
+    top: number;
+  } | null>(null);
   // 다른 공간으로 옮기면(뒤로 가기 포함) 이전 공간의 선택은 의미가 없으므로 비운다.
   const [selectionCanvasKey, setSelectionCanvasKey] = useState(canvasKey);
   if (selectionCanvasKey !== canvasKey) {
@@ -443,6 +457,7 @@ export default function Workspace({
     setSelectedNodeIds([]);
     setSelectedConnectionId(null);
     setConnectMenu(null);
+    setNodeMenu(null);
   }
   const [isPanning, setIsPanning] = useState(false); //드래그 상태따라 커서 변경
   const [spaceHeld, setSpaceHeld] = useState(false);
@@ -1141,6 +1156,22 @@ export default function Workspace({
               ? [0, -step]
               : [0, step];
       nudgeSelection(dx, dy);
+      return true;
+    }
+    // G로 그룹화, Shift+G로 그룹화 해제.
+    if (key === "g" && selectedNodeIds.length) {
+      event.preventDefault();
+      if (event.shiftKey) ungroupSelection();
+      else groupSelection();
+      return true;
+    }
+    // 메뉴 키·Shift+F10으로 선택한 노드의 메뉴를 연다.
+    if (
+      (event.key === "ContextMenu" || (event.shiftKey && key === "f10")) &&
+      selectedNodeIds.length
+    ) {
+      event.preventDefault();
+      openNodeMenuForSelection();
       return true;
     }
     // "+"는 대부분의 자판에서 Shift가 필요하므로 확대 키는 Shift와 무관하게 받는다.
@@ -2016,6 +2047,74 @@ export default function Workspace({
     setSelectedConnectionId(null);
   }
 
+  /** 선택한 노드를 새 그룹으로 묶는다(실행 취소 한 단계). */
+  function groupSelection() {
+    if (gestureRef.current || selectedNodeIds.length === 0) return;
+    const path = canvasPath.slice(0, activeDepth);
+    const nodeIds = selectedNodeIds;
+    // 갱신 함수 안에서도 같은 ID를 쓰도록 미리 만든다.
+    const groupId = uuidv4();
+    const preview = groupNodes(rootDocument, path, nodeIds, () => groupId);
+    if ("error" in preview) {
+      setNotice(preview.error);
+      return;
+    }
+    dispatchHistory({ type: "commit" });
+    dispatchHistory({
+      type: "change",
+      update: (root) => {
+        const result = groupNodes(root, path, nodeIds, () => groupId);
+        return "document" in result ? result.document : root;
+      },
+    });
+  }
+
+  /** 선택한 노드를 그룹에서 뺀다(실행 취소 한 단계). */
+  function ungroupSelection() {
+    if (gestureRef.current || selectedNodeIds.length === 0) return;
+    const path = canvasPath.slice(0, activeDepth);
+    const nodeIds = selectedNodeIds;
+    dispatchHistory({ type: "commit" });
+    dispatchHistory({
+      type: "change",
+      update: (root) => ungroupNodes(root, path, nodeIds),
+    });
+  }
+
+  /** 키보드로 메뉴를 열 때: 선택한 첫 노드의 왼쪽 위 근처(뷰포트 기준). */
+  function openNodeMenuForSelection() {
+    const node = workspace.nodes.find((item) =>
+      selectedNodeIds.includes(item.id),
+    );
+    if (!node) return;
+    setNodeMenu({
+      left: node.position.x * camera.zoom + camera.x + 16,
+      top: node.position.y * camera.zoom + camera.y + 16,
+    });
+  }
+
+  /** 노드 위 우클릭: 선택에 없으면 그 노드만 고르고, 커서 자리에 메뉴를 연다. */
+  function openNodeMenuAt(event: ReactMouseEvent<HTMLDivElement>) {
+    if (tool !== "select" || gestureRef.current) return;
+    const target = event.target instanceof Element ? event.target : null;
+    // 글을 쓰는 칸은 브라우저 메뉴(붙여넣기 등)를 그대로 둔다.
+    if (!target || target.closest("input, textarea, [contenteditable='true']"))
+      return;
+    const nodeElement = target.closest<HTMLElement>("[data-node-id]");
+    const nodeId = nodeElement?.dataset.nodeId;
+    const viewport = viewportRef.current;
+    if (!nodeId || !viewport) return;
+    if (!selectedNodeIds.includes(nodeId)) {
+      setSelectedNodeIds([nodeId]);
+      setSelectedConnectionId(null);
+    }
+    const rect = viewport.getBoundingClientRect();
+    setNodeMenu({
+      left: event.clientX - rect.left,
+      top: event.clientY - rect.top,
+    });
+  }
+
   /** 지금 공간 문서를 바꾸는 체크리스트·역할 편집 한 번(실행 취소 한 단계). */
   function applyDocumentChange(
     update: (root: WorkspaceDocument, path: string[]) => WorkspaceDocument,
@@ -2869,6 +2968,7 @@ export default function Workspace({
             moveGesture(event);
           }}
           onPointerLeave={() => setEraserPointer(null)}
+          onContextMenu={openNodeMenuAt}
           onPointerUp={endGesture}
           onPointerCancel={endGesture}
           onLostPointerCapture={endGesture}
@@ -3031,6 +3131,21 @@ export default function Workspace({
           >
             <FitIcon size={20} />
           </button>
+          {nodeMenu && (
+            <NodeContextMenu
+              left={nodeMenu.left}
+              top={nodeMenu.top}
+              canUngroup={workspace.nodes.some(
+                (node) => selectedNodeIds.includes(node.id) && !!node.groupId,
+              )}
+              onGroup={groupSelection}
+              onUngroup={ungroupSelection}
+              onClose={() => {
+                setNodeMenu(null);
+                viewportRef.current?.focus({ preventScroll: true });
+              }}
+            />
+          )}
           {connectMenu && (
             <ConnectNodeMenu
               left={connectMenu.left}
