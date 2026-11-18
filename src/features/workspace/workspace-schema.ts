@@ -5,6 +5,7 @@ import { getConnectionKey, MAX_CONNECTIONS } from "./connections";
 import { CONNECTION_COLOR_KEYS } from "./connection-colors";
 import { MAX_NODE_TAGS, MAX_PROJECT_TAGS, TAG_NAME_PATTERN } from "./tags";
 import { MAX_CHECKLIST_ITEM_LENGTH, MAX_CHECKLIST_ITEMS } from "./checklist";
+import { MAX_GROUP_TITLE_LENGTH, MAX_GROUPS_PER_CANVAS } from "./groups";
 import {
   MAX_DRAWING_POINTS,
   MAX_POINTS_PER_STROKE,
@@ -72,6 +73,17 @@ const nodeBaseSchema = z.strictObject({
   role: z
     .strictObject({ kind: z.literal("todo"), done: z.boolean() })
     .optional(),
+  groupId: z.uuid().optional(),
+});
+
+const groupSchema = z.strictObject({
+  id: z.uuid(),
+  title: z
+    .string()
+    .max(MAX_GROUP_TITLE_LENGTH)
+    .refine((value) => value.trim().length > 0 && value === value.trim(), {
+      message: "그룹 이름이 비어 있거나 앞뒤에 공백이 있습니다.",
+    }),
 });
 
 const checklistItemSchema = z.strictObject({
@@ -208,6 +220,7 @@ function documentSchemaAtDepth(depth: number): z.ZodType<WorkspaceDocument> {
       // 이전에 저장한 문서에는 연결선 항목이 없어도 열린다.
       connections: z.array(connectionSchema).max(MAX_CONNECTIONS).default([]),
       drawing: drawingSchema.optional(),
+      groups: z.array(groupSchema).max(MAX_GROUPS_PER_CANVAS).optional(),
       // 태그 목록은 루트에만 둔다. 하위 문서에 목록이 있으면 거절한다.
       tags:
         depth === 0
@@ -259,6 +272,20 @@ function documentSchemaAtDepth(depth: number): z.ZodType<WorkspaceDocument> {
         new Set(document.connections.map(getConnectionKey)).size ===
           document.connections.length,
       { message: "연결선이 중복되었습니다.", path: ["connections"] },
+    )
+    .refine(
+      (document) => {
+        // 그룹은 공간마다 따로다. 노드의 groupId는 같은 공간의 그룹이어야 한다.
+        const groupIds = (document.groups ?? []).map((group) => group.id);
+        const known = new Set(groupIds);
+        return (
+          known.size === groupIds.length &&
+          document.nodes.every(
+            (node) => node.groupId === undefined || known.has(node.groupId),
+          )
+        );
+      },
+      { message: "그룹이 올바르지 않습니다.", path: ["groups"] },
     );
 }
 
