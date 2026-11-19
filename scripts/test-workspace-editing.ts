@@ -423,6 +423,7 @@ const factory = new Function(
   const setSearchActive = value => { state.searchActive = value; };
   const setConnectMenu = value => { state.connectMenu = value; };
   const setJoinTargetId = value => { state.joinTarget = value; };
+  const searchOpen = !!state.searchOpen;
   const setSearchOpen = value => { state.searchOpen = value; };
   const setSearchQuery = value => { state.searchQuery = value; };
   const setDebouncedQuery = value => { state.debouncedQuery = value; };
@@ -2366,4 +2367,14 @@ test("dismissing the search on focus loss leaves focus where the user moved it",
   assert.equal(h.state.searchScope, null);
   assert.equal(h.state.searchAt, null);
   assert.equal(h.state.focusCount, before);
+});
+
+test("Escape on the canvas closes an open search and keeps the selection", () => {
+  const h = setup(["a"]);
+  h.state.searchOpen = true;
+  h.call("handleWorkspaceKeyDown", key("Escape"));
+  assert.equal(h.state.searchOpen, false);
+  assert.deepEqual(h.state.selected, ["a"]);
+  h.call("handleWorkspaceKeyDown", key("Escape"));
+  assert.deepEqual(h.state.selected, []);
 });

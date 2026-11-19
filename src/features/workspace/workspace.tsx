@@ -1146,6 +1146,9 @@ export default function Workspace({
           dispatchHistory({ type: "cancel" });
         }
         clearGesture();
+      } else if (searchOpen) {
+        // 검색이 열려 있으면 포커스가 캔버스에 있어도 Esc가 먼저 검색을 닫는다(선택은 그대로).
+        closeSearch();
       } else if (tool !== "select") {
         changeTool("select");
       } else {
