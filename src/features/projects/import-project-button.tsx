@@ -99,7 +99,11 @@ export default function ImportProjectButton({
             : quietButton
         }
       >
-        {pending ? "불러오는 중…" : ".nono 불러오기"}
+        {pending
+          ? "불러오는 중…"
+          : variant === "menu"
+            ? "불러오기"
+            : ".nono 불러오기"}
       </button>
       {error && (
         <p

@@ -119,7 +119,7 @@ export default function WorkspaceMenu({
               className="absolute top-full left-0 mt-1 min-h-12 w-72 rounded-xl border border-rule bg-white p-4 shadow-float"
             >
               {id === "file" && (
-                <div className="space-y-2">
+                <div className="space-y-1">
                   <button
                     type="button"
                     onClick={() => {
@@ -129,20 +129,12 @@ export default function WorkspaceMenu({
                     }}
                     className="w-full rounded-lg px-3 py-2 text-left text-bark hover:bg-mist focus-visible:outline-2 focus-visible:outline-moss-deep"
                   >
-                    .nono로 내보내기
+                    내보내기
                   </button>
-                  <p className="px-3 text-xs leading-5 break-keep text-lichen">
-                    하위 작업 공간과 이미지까지 프로젝트 전체를 파일 하나로
-                    백업해요. 저장하기 전 편집도 들어가요.
-                  </p>
                   <ImportProjectButton
                     variant="menu"
                     onDone={() => setMenu(null)}
                   />
-                  <p className="px-3 text-xs leading-5 break-keep text-lichen">
-                    .nono 파일을 새 프로젝트로 불러와요. 지금 프로젝트는
-                    그대로예요.
-                  </p>
                 </div>
               )}
               {id === "view" && (
