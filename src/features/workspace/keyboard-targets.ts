@@ -55,3 +55,26 @@ export function focusAfterRemoval(
   if (index < 0) return null;
   return ids[index + 1] ?? ids[index - 1] ?? null;
 }
+
+const FIELD = "input, textarea, [contenteditable='true']";
+
+/** 글 칸에 고른 글자가 있는지. input/textarea는 선택 범위, 그 밖은 문서 선택으로 본다. */
+export function hasSelectedText(field: Element): boolean {
+  const range = field as Partial<
+    Pick<HTMLTextAreaElement, "selectionStart" | "selectionEnd">
+  >;
+  if (typeof range.selectionStart === "number")
+    return range.selectionStart !== range.selectionEnd;
+  if (typeof range.selectionStart === "object") return false;
+  return globalThis.getSelection?.()?.isCollapsed === false;
+}
+
+/**
+ * Ctrl+C/X를 노드 복사·잘라내기로 쓸지(true) 글자에 맡길지(false).
+ * 텍스트 노드 본문은 늘 켜져 있는 글 칸이라, 노드 안 글 칸은 고른 글자가 없을 때만 노드용이다.
+ */
+export function copiesNodes(target: Element | null): boolean {
+  const field = target?.closest(FIELD);
+  if (!field) return true;
+  return !!field.closest("[data-node-id]") && !hasSelectedText(field);
+}

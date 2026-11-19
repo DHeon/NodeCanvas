@@ -27,6 +27,8 @@ export type NodeBase = {
   tags?: string[];
   /** 노드의 역할. 없으면 역할 없음. 체크리스트 노드에는 붙지 않는다. */
   role?: NodeRole;
+  /** 같은 공간의 그룹 ID. 없으면 그룹 없음. 노드는 한 그룹에만 속한다. */
+  groupId?: string;
 };
 
 /** 역할은 나중에 종류가 늘어나도록 kind로 구분한다. */
@@ -129,7 +131,12 @@ export type WorkspaceDocument = {
   tags?: TagDefinition[];
   // 공간마다 따로 저장하는 손그림. 없으면 그림 없음.
   drawing?: { strokes: DrawingStroke[] };
+  /** 이 공간의 그룹 이름 목록. 영역은 멤버 노드 위치로 그릴 때 계산한다. */
+  groups?: NodeGroup[];
 };
+
+/** 노드 묶음. 멤버는 노드의 groupId로 정해진다. */
+export type NodeGroup = { id: string; title: string };
 
 //텍스트 노드 수정용
 export type TextNodeContentPatch = Partial<Pick<TextNode, "title" | "text">>;

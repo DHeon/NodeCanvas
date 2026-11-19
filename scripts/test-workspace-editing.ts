@@ -32,6 +32,9 @@ import {
   replaceNodeImage,
 } from "../src/features/workspace/node-transform";
 import * as drawing from "../src/features/workspace/drawing";
+import * as groupOps from "../src/features/workspace/groups";
+import * as clipOps from "../src/features/workspace/node-clipboard";
+import * as keyTargets from "../src/features/workspace/keyboard-targets";
 import {
   resolveWorkspacePath,
   updateWorkspaceAtPath,
@@ -212,7 +215,24 @@ const names = [
   "eraseAlong",
   "pickSearchResult",
   "focusNodeById",
+  "beginNodeGesture",
+  "startGroupDrag",
+  "groupSelection",
+  "ungroupSelection",
+  "openMenuFromKeyboard",
+  "openContextMenuAt",
+  "contextMenuItems",
+  "copyFromMenu",
+  "runMenuAction",
+  "applyDocumentChange",
   "openTagLens",
+  "copySelection",
+  "pastePoint",
+  "pasteAt",
+  "handleCopy",
+  "handleCut",
+  "handlePaste",
+  "clipboardBlocked",
 ];
 const functions = new Map<string, string>();
 let clearGesture = "";
@@ -245,11 +265,19 @@ class TestElement {
   constructor(
     private editable = false,
     private node = false,
-    public dataset: { nodeId?: string; connectionSide?: string } = {},
+    public dataset: {
+      nodeId?: string;
+      connectionSide?: string;
+      groupId?: string;
+    } = {},
   ) {}
   closest(selector: string) {
     if (selector === "[data-connection-side]") {
       return this.dataset.connectionSide ? this : null;
+    }
+    if (selector === "dialog[open]") return null;
+    if (selector === "[data-group-id]") {
+      return this.dataset.groupId ? this : null;
     }
     return (selector.includes("[data-node-id]") ? this.node : this.editable)
       ? this
@@ -286,12 +314,22 @@ type TestState = {
   tool?: "select" | "pen" | "eraser";
   canvasPath?: string[];
   searchActive?: number | null;
+  joinTarget?: string | null;
+  contextMenu?: {
+    left: number;
+    top: number;
+    point: Point;
+    kind: "nodes" | "paste" | "text";
+  } | null;
   searchOpen?: boolean;
   searchQuery?: string;
   debouncedQuery?: string;
   pendingFocus?: { key: string; nodeId: string } | null;
+  clip?: clipOps.NodeClip | null;
+  lastPointer?: { clientX: number; clientY: number } | null;
+  viewer?: string | null;
 };
-type Handlers = Record<string, (...args: unknown[]) => void>;
+type Handlers = Record<string, (...args: unknown[]) => unknown>;
 const factory = new Function(
   "state",
   "viewportRef",
@@ -310,7 +348,30 @@ const factory = new Function(
   "updateWorkspaceAtPath",
   "drawing",
   "connectSourcesToTarget",
+  "groupOps",
+  "clipOps",
+  "keyTargets",
   `
+  const { canJoinByDrag, groupAtPoint, joinGroup, groupNodes, ungroupNodes, renameGroup } = groupOps;
+  const { selectedGroupIds, makeClip, pasteClip, PASTE_ERROR_NOTICES } = clipOps;
+  const { copiesNodes, hasSelectedText } = keyTargets;
+  const runTextAction = () => { state.calls.push("text-action"); };
+  const hasClip = !!state.clip;
+  const viewerNodeId = state.viewer ?? null;
+  const contextMenu = state.contextMenu ?? null;
+  const setHasClip = () => {};
+  const clipboardRef = {
+    get current() { return state.clip ?? null; },
+    set current(value) { state.clip = value; },
+  };
+  const lastPointerRef = {
+    get current() { return state.lastPointer ?? null; },
+    set current(value) { state.lastPointer = value; },
+  };
+  const normalizeLinkUrl = url => url;
+  const setLinkUrl = () => { state.calls.push("link-url"); };
+  const imageUploads = { upload: () => { state.calls.push("upload"); } };
+  const setContextMenu = value => { state.contextMenu = value; };
   const { appendPoint, appendStroke, countDocumentDrawingPoints, eraseStrokes,
     exceedsDrawingLimits, simplifyPoints, MAX_DRAWING_POINTS, MAX_STROKES_PER_CANVAS } = drawing;
   const ERASER_RADIUS = 10;
@@ -346,6 +407,7 @@ const factory = new Function(
   };
   const setSearchActive = value => { state.searchActive = value; };
   const setConnectMenu = value => { state.connectMenu = value; };
+  const setJoinTargetId = value => { state.joinTarget = value; };
   const setSearchOpen = value => { state.searchOpen = value; };
   const setSearchQuery = value => { state.searchQuery = value; };
   const setDebouncedQuery = value => { state.debouncedQuery = value; };
@@ -405,8 +467,8 @@ function setup(selected: string[] = []) {
   return {
     state,
     gestureRef,
-    call(name: string, ...args: unknown[]) {
-      factory(
+    call(name: string, ...args: unknown[]): unknown {
+      return factory(
         state,
         { current: viewport },
         gestureRef,
@@ -424,6 +486,9 @@ function setup(selected: string[] = []) {
         updateWorkspaceAtPath,
         drawing,
         connectSourcesToTarget,
+        groupOps,
+        clipOps,
+        keyTargets,
       )[name](...args);
     },
   };
@@ -1561,4 +1626,563 @@ test("단축키: K는 체크리스트 노드를 추가한다", () => {
   const h = setup();
   h.call("handleWorkspaceKeyDown", key("k"));
   assert.deepEqual(h.state.calls, ["add:checklist_node"]);
+});
+
+function groupedSetup() {
+  const h = setup();
+  const base = fixture();
+  h.state.history = createWorkspaceHistory({
+    ...base,
+    groups: [{ id: "g", title: "그룹" }],
+    nodes: base.nodes.map((node) =>
+      node.id === "c" ? node : { ...node, groupId: "g" },
+    ),
+  } as WorkspaceDocument);
+  return h;
+}
+
+test("startGroupDrag selects members and moves them together in one undo step", () => {
+  const h = groupedSetup();
+  h.call("startGroupDrag", pointer(), "g");
+  assert.deepEqual(h.state.selected, ["a", "b"]);
+  // 화면 +40px, 배율 0.5 → 캔버스 +80
+  h.call("moveGesture", pointer({ clientX: 60, clientY: 40 }));
+  const position = (id: string) =>
+    h.state.history.present.nodes.find((node) => node.id === id)!.position;
+  assert.deepEqual(position("a"), { x: 180, y: 100 });
+  assert.deepEqual(position("b"), { x: 680, y: 400 });
+  assert.deepEqual(position("c"), { x: 1200, y: 700 });
+  h.call(
+    "endGesture",
+    pointer({ type: "pointerup", buttons: 0, clientX: 60, clientY: 40 }),
+  );
+  assert.equal(h.state.history.past.length, 1);
+});
+
+test("startGroupDrag on an empty group does nothing", () => {
+  const h = groupedSetup();
+  h.call("startGroupDrag", pointer(), "missing");
+  assert.equal(h.gestureRef.current, null);
+});
+
+const groupOf = (h: ReturnType<typeof setup>, id: string) =>
+  h.state.history.present.nodes.find((node) => node.id === id)!.groupId;
+// 캔버스 (400, 300) = 화면 (220, 190): (clientX - 10 - 10) / 0.5
+const insideGroup = { clientX: 220, clientY: 190 };
+
+test("dragging ungrouped nodes onto a group joins on release in one undo step", () => {
+  const h = groupedSetup();
+  const c = h.state.history.present.nodes.find((node) => node.id === "c")!;
+  h.call("startNodeDrag", pointer(), c);
+  h.call("moveGesture", pointer(insideGroup));
+  assert.equal(h.state.joinTarget, "g");
+  h.call(
+    "endGesture",
+    pointer({ type: "pointerup", buttons: 0, ...insideGroup }),
+  );
+  assert.equal(groupOf(h, "c"), "g");
+  assert.equal(h.state.history.past.length, 1);
+  assert.equal(h.state.joinTarget, null);
+  h.call("undo");
+  assert.equal(groupOf(h, "c"), undefined);
+});
+
+test("mixed drag does not join", () => {
+  const h = setup(["a", "c"]);
+  const base = fixture();
+  h.state.history = createWorkspaceHistory({
+    ...base,
+    groups: [
+      { id: "g", title: "가" },
+      { id: "h", title: "나" },
+    ],
+    nodes: base.nodes.map((node) =>
+      node.id === "a"
+        ? { ...node, groupId: "g" }
+        : node.id === "b"
+          ? { ...node, groupId: "h" }
+          : node,
+    ),
+  } as WorkspaceDocument);
+  const c = h.state.history.present.nodes.find((node) => node.id === "c")!;
+  h.call("startNodeDrag", pointer(), c);
+  // b(600,400) 그룹 h 안: 캔버스 (650, 450) = 화면 (345, 265)
+  h.call("moveGesture", pointer({ clientX: 345, clientY: 265 }));
+  assert.equal(h.state.joinTarget ?? null, null);
+  h.call(
+    "endGesture",
+    pointer({ type: "pointerup", buttons: 0, clientX: 345, clientY: 265 }),
+  );
+  assert.equal(groupOf(h, "c"), undefined);
+  assert.equal(groupOf(h, "a"), "g");
+});
+
+test("cancelled drag does not join", () => {
+  const h = groupedSetup();
+  const c = h.state.history.present.nodes.find((node) => node.id === "c")!;
+  h.call("startNodeDrag", pointer(), c);
+  h.call("moveGesture", pointer(insideGroup));
+  h.call(
+    "endGesture",
+    pointer({ type: "pointercancel", buttons: 0, ...insideGroup }),
+  );
+  assert.equal(groupOf(h, "c"), undefined);
+});
+
+test("G groups the selection in one undo step", () => {
+  const h = setup(["a", "c"]);
+  h.call("handleWorkspaceKeyDown", key("g"));
+  const nodes = h.state.history.present.nodes;
+  const groupId = nodes.find((node) => node.id === "a")!.groupId;
+  assert.ok(groupId);
+  assert.equal(nodes.find((node) => node.id === "c")!.groupId, groupId);
+  assert.equal(nodes.find((node) => node.id === "b")!.groupId, undefined);
+  assert.deepEqual(
+    h.state.history.present.groups?.map((group) => group.title),
+    ["그룹"],
+  );
+  assert.equal(h.state.history.past.length, 1);
+});
+
+test("Shift+G ungroups only the selected members", () => {
+  const h = groupedSetup();
+  h.state.selected = ["a"];
+  h.call("handleWorkspaceKeyDown", key("G", { shiftKey: true }));
+  assert.equal(groupOf(h, "a"), undefined);
+  assert.equal(groupOf(h, "b"), "g");
+  assert.equal(h.state.history.past.length, 1);
+});
+
+test("G with nothing selected does nothing", () => {
+  const h = setup();
+  h.call("handleWorkspaceKeyDown", key("g"));
+  assert.equal(h.state.history.past.length, 0);
+  assert.equal(h.state.history.present.groups, undefined);
+});
+
+test("context menu key and Shift+F10 open the node menu for the selection", () => {
+  const h = setup(["b"]);
+  h.call("handleWorkspaceKeyDown", key("ContextMenu"));
+  assert.equal(h.state.contextMenu?.kind, "nodes");
+  h.state.contextMenu = null;
+  h.call("handleWorkspaceKeyDown", key("F10", { shiftKey: true }));
+  const menu = h.state.contextMenu as TestState["contextMenu"];
+  assert.equal(menu?.kind, "nodes");
+});
+
+test("grouping and ungrouping return focus to the canvas", () => {
+  const h = setup(["a", "c"]);
+  const before = h.state.focusCount;
+  h.call("handleWorkspaceKeyDown", key("g"));
+  assert.equal(h.state.focusCount, before + 1);
+  h.call("handleWorkspaceKeyDown", key("G", { shiftKey: true }));
+  assert.equal(h.state.focusCount, before + 2);
+});
+
+test("right-click selects the node unless it is already selected", () => {
+  const h = setup(["b"]);
+  const event = (nodeId: string | null) => ({
+    clientX: 210,
+    clientY: 120,
+    target: new TestElement(false, nodeId !== null, nodeId ? { nodeId } : {}),
+    preventDefault() {},
+  });
+  h.call("openContextMenuAt", event("a"));
+  assert.deepEqual(h.state.selected, ["a"]);
+  assert.equal(h.state.contextMenu!.left, 200);
+  assert.equal(h.state.contextMenu!.top, 100);
+  assert.equal(h.state.contextMenu!.kind, "nodes");
+
+  h.state.selected = ["b", "c"];
+  h.state.contextMenu = null;
+  h.call("openContextMenuAt", event("c"));
+  assert.deepEqual(h.state.selected, ["b", "c"]);
+  assert.equal(h.state.contextMenu!.kind, "nodes");
+});
+
+test("tab drag stops the whole group at the finite canvas edge", () => {
+  const h = groupedSetup();
+  h.call("startGroupDrag", pointer(), "g");
+  // 화면 +1000px = 캔버스 +2000, 오른쪽 끝(b 800 → 2000)에서 +1200으로 멈춘다.
+  h.call("moveGesture", pointer({ clientX: 1020, clientY: 40 }));
+  const x = (id: string) =>
+    h.state.history.present.nodes.find((node) => node.id === id)!.position.x;
+  assert.equal(x("a"), 1300);
+  assert.equal(x("b"), 1800);
+  assert.equal(x("b") - x("a"), 500);
+});
+
+test("renaming a group is one undo step", () => {
+  const h = groupedSetup();
+  h.call("applyDocumentChange", (root: WorkspaceDocument, path: string[]) =>
+    groupOps.renameGroup(root, path, "g", "회의"),
+  );
+  assert.equal(h.state.history.present.groups![0].title, "회의");
+  assert.equal(h.state.history.past.length, 1);
+  h.call("undo");
+  assert.equal(h.state.history.present.groups![0].title, "그룹");
+});
+
+test("Shift+tab click adds a group to the selection and removes it when already selected", () => {
+  const h = groupedSetup();
+  h.state.selected = ["c"];
+  h.call("startGroupDrag", pointer({ shiftKey: true }), "g");
+  assert.deepEqual([...h.state.selected].sort(), ["a", "b", "c"]);
+  h.call("endGesture", pointer({ type: "pointerup", buttons: 0 }));
+  h.gestureRef.current = null;
+  h.call("startGroupDrag", pointer({ shiftKey: true }), "g");
+  assert.deepEqual(h.state.selected, ["c"]);
+  assert.equal(h.gestureRef.current, null);
+});
+
+test("plain tab click still replaces the selection with the group", () => {
+  const h = groupedSetup();
+  h.state.selected = ["c"];
+  h.call("startGroupDrag", pointer(), "g");
+  assert.deepEqual(h.state.selected, ["a", "b"]);
+});
+
+// ── 복사·잘라내기·붙여넣기 ──
+function clipboardData(text = "", files: unknown[] = []) {
+  const data: Record<string, string> = { "text/plain": text };
+  return {
+    files,
+    data,
+    getData: (type: string) => data[type] ?? "",
+    setData: (type: string, value: string) => {
+      data[type] = value;
+    },
+  };
+}
+function clipEvent(target: unknown, data = clipboardData()) {
+  return {
+    target,
+    clipboardData: data,
+    defaultPrevented: false,
+    preventDefault() {
+      this.defaultPrevented = true;
+    },
+  };
+}
+const nodeField = (start: number, end: number) =>
+  Object.assign(new TestElement(true, true, { nodeId: "a" }), {
+    selectionStart: start,
+    selectionEnd: end,
+  });
+const outsideField = () =>
+  Object.assign(new TestElement(true, false), {
+    selectionStart: 0,
+    selectionEnd: 0,
+  });
+
+test("Ctrl+C on the canvas copies the selection and writes its text", () => {
+  const h = setup(["a"]);
+  const event = clipEvent(new TestElement());
+  h.call("handleCopy", event);
+  assert.equal(h.state.clip!.nodes[0].title, "A");
+  assert.equal(event.clipboardData.data["text/plain"], "A\n본문");
+  assert.equal(event.defaultPrevented, true);
+  assert.equal(h.state.history.past.length, 0);
+});
+
+test("copy in a node text field with selected text leaves it to the browser", () => {
+  const h = setup(["a"]);
+  const event = clipEvent(nodeField(0, 2));
+  h.call("handleCopy", event);
+  assert.equal(h.state.clip ?? null, null);
+  assert.equal(event.defaultPrevented, false);
+});
+
+test("copy in a node text field with only a caret copies the node", () => {
+  const h = setup(["a"]);
+  h.call("handleCopy", clipEvent(nodeField(2, 2)));
+  assert.equal(h.state.clip!.nodes.length, 1);
+});
+
+test("copy in a text field outside nodes never copies nodes", () => {
+  const h = setup(["a"]);
+  const event = clipEvent(outsideField());
+  h.call("handleCopy", event);
+  assert.equal(h.state.clip ?? null, null);
+  assert.equal(event.defaultPrevented, false);
+});
+
+test("copy with nothing selected keeps the browser default", () => {
+  const h = setup([]);
+  const event = clipEvent(new TestElement());
+  h.call("handleCopy", event);
+  assert.equal(h.state.clip ?? null, null);
+  assert.equal(event.defaultPrevented, false);
+});
+
+test("cut copies then deletes in one undo step and undo keeps the clip", () => {
+  const h = setup(["a"]);
+  h.call("handleCut", clipEvent(new TestElement()));
+  assert.equal(h.state.history.present.nodes.length, 2);
+  assert.equal(h.state.history.past.length, 1);
+  h.call("undo");
+  assert.equal(h.state.history.present.nodes.length, 3);
+  assert.equal(h.state.clip!.nodes[0].id, "a");
+});
+
+test("paste of the same text pastes nodes at the last pointer, one undo step", () => {
+  const h = setup(["a"]);
+  h.call("handleCopy", clipEvent(new TestElement()));
+  h.state.lastPointer = { clientX: 110, clientY: 120 };
+  // 캔버스 (180,160)에 a(320x220)의 가운데 → (20,50)
+  h.call(
+    "handlePaste",
+    clipEvent(new TestElement(), clipboardData("A\r\n본문")),
+  );
+  const present = h.state.history.present;
+  assert.equal(present.nodes.length, 4);
+  assert.deepEqual(h.state.selected.length, 1);
+  assert.notEqual(h.state.selected[0], "a");
+  assert.deepEqual(present.nodes.at(-1)!.position, { x: 20, y: 50 });
+  assert.equal(h.state.history.past.length, 1);
+});
+
+test("paste with different text falls back to the link node path", () => {
+  const h = setup(["a"]);
+  h.call("handleCopy", clipEvent(new TestElement()));
+  h.call(
+    "handlePaste",
+    clipEvent(new TestElement(), clipboardData("https://example.com")),
+  );
+  assert.ok(h.state.calls.includes("add:link_node"));
+  assert.equal(h.state.history.present.nodes.length, 3);
+});
+
+test("paste after a failed system write still pastes nodes", () => {
+  const h = setup(["a"]);
+  h.call("handleCopy", clipEvent(new TestElement()));
+  h.state.clip = { ...h.state.clip!, systemSynced: false };
+  h.call("handlePaste", clipEvent(new TestElement(), clipboardData("다른 글")));
+  assert.equal(h.state.history.present.nodes.length, 4);
+});
+
+test("paste without a pointer uses the view center", () => {
+  const h = setup(["a"]);
+  h.call("handleCopy", clipEvent(new TestElement()));
+  h.state.lastPointer = null;
+  h.call("handlePaste", clipEvent(new TestElement(), clipboardData("A\n본문")));
+  // 화면 가운데 (500,350) → 캔버스 (980,660), a 가운데 → (820,550)
+  assert.deepEqual(h.state.history.present.nodes.at(-1)!.position, {
+    x: 820,
+    y: 550,
+  });
+});
+
+test("paste into a text field is left to the browser", () => {
+  const h = setup(["a"]);
+  h.call("handleCopy", clipEvent(new TestElement()));
+  const event = clipEvent(nodeField(0, 0), clipboardData("A\n본문"));
+  h.call("handlePaste", event);
+  assert.equal(h.state.history.present.nodes.length, 3);
+  assert.equal(event.defaultPrevented, false);
+});
+
+test("paste over the node limit shows the notice and changes nothing", () => {
+  const h = setup(["a"]);
+  h.call("handleCopy", clipEvent(new TestElement()));
+  const base = fixture();
+  h.state.history = createWorkspaceHistory({
+    ...base,
+    nodes: Array.from({ length: 1000 }, (_, index) => ({
+      ...base.nodes[1],
+      id: `n${index}`,
+    })),
+  });
+  h.call("pasteAt", { x: 100, y: 100 });
+  assert.equal(h.state.history.present.nodes.length, 1000);
+  assert.ok(
+    h.state.calls.includes(
+      "notice:노드는 프로젝트 전체에서 1000개까지 만들 수 있어요.",
+    ),
+  );
+});
+
+// ── 상황별 우클릭 메뉴 ──
+type MenuEntry =
+  "separator" | { id: string; label: string; disabled?: boolean };
+function rightClick(target: unknown, clientX = 210, clientY = 120) {
+  return {
+    clientX,
+    clientY,
+    target,
+    defaultPrevented: false,
+    preventDefault() {
+      this.defaultPrevented = true;
+    },
+  };
+}
+function menuItems(h: ReturnType<typeof setup>) {
+  return h.call("contextMenuItems", h.state.contextMenu) as MenuEntry[];
+}
+const labels = (items: MenuEntry[]) =>
+  items.map((item) => (item === "separator" ? item : item.label));
+const entry = (items: MenuEntry[], id: string) =>
+  items.find((item) => item !== "separator" && item.id === id) as Exclude<
+    MenuEntry,
+    "separator"
+  >;
+
+test("right-click on a node opens the node menu with cut, copy, paste and group", () => {
+  const h = setup();
+  const event = rightClick(new TestElement(false, true, { nodeId: "a" }));
+  h.call("openContextMenuAt", event);
+  assert.equal(event.defaultPrevented, true);
+  const items = menuItems(h);
+  assert.deepEqual(labels(items), [
+    "잘라내기",
+    "복사",
+    "붙여넣기",
+    "separator",
+    "그룹화",
+  ]);
+  assert.equal(entry(items, "paste").disabled, true);
+  h.call("runMenuAction", "copy");
+  assert.equal(h.state.clip!.nodes[0].id, "a");
+  assert.equal(entry(menuItems(h), "paste").disabled, false);
+});
+
+test("right-click on a grouped selection adds ungroup", () => {
+  const h = groupedSetup();
+  h.call(
+    "openContextMenuAt",
+    rightClick(new TestElement(false, true, { nodeId: "a" })),
+  );
+  assert.deepEqual(labels(menuItems(h)).slice(-2), ["그룹화", "그룹화 해제"]);
+});
+
+test("right-click on empty space keeps the selection and opens the node menu", () => {
+  const h = setup(["a", "b"]);
+  h.call("openContextMenuAt", rightClick(new TestElement()));
+  assert.deepEqual(h.state.selected, ["a", "b"]);
+  assert.equal(h.state.contextMenu!.kind, "nodes");
+});
+
+test("right-click on empty space with nothing selected offers paste only", () => {
+  const h = setup();
+  h.call("openContextMenuAt", rightClick(new TestElement()));
+  assert.equal(h.state.contextMenu!.kind, "paste");
+  assert.deepEqual(labels(menuItems(h)), ["붙여넣기"]);
+});
+
+test("right-click on a group tab selects the group", () => {
+  const h = groupedSetup();
+  h.state.selected = ["c"];
+  h.call(
+    "openContextMenuAt",
+    rightClick(new TestElement(false, false, { groupId: "g" })),
+  );
+  assert.deepEqual(h.state.selected, ["a", "b"]);
+  assert.equal(h.state.contextMenu!.kind, "nodes");
+  h.state.selected = ["a", "b", "c"];
+  h.call(
+    "openContextMenuAt",
+    rightClick(new TestElement(false, false, { groupId: "g" })),
+  );
+  assert.deepEqual(h.state.selected, ["a", "b", "c"]);
+});
+
+test("right-click in a field with selected text opens the text menu", () => {
+  const h = setup(["a"]);
+  const field = Object.assign(new TestElement(true, true, { nodeId: "a" }), {
+    selectionStart: 0,
+    selectionEnd: 2,
+    value: "본문",
+  });
+  h.call("openContextMenuAt", rightClick(field));
+  assert.equal(h.state.contextMenu!.kind, "text");
+  assert.deepEqual(labels(menuItems(h)), ["잘라내기", "복사", "붙여넣기"]);
+});
+
+test("right-click in a node field with only a caret opens the node menu", () => {
+  const h = setup();
+  const field = Object.assign(new TestElement(true, true, { nodeId: "a" }), {
+    selectionStart: 1,
+    selectionEnd: 1,
+  });
+  h.call("openContextMenuAt", rightClick(field));
+  assert.equal(h.state.contextMenu!.kind, "nodes");
+  assert.deepEqual(h.state.selected, ["a"]);
+});
+
+test("right-click in an outside field without selected text opens nothing", () => {
+  const h = setup(["a"]);
+  const field = Object.assign(new TestElement(true, false), {
+    selectionStart: 0,
+    selectionEnd: 0,
+  });
+  const event = rightClick(field);
+  h.call("openContextMenuAt", event);
+  assert.equal(h.state.contextMenu ?? null, null);
+  assert.equal(event.defaultPrevented, true);
+});
+
+test("menu paste puts the clip at the right-click point", () => {
+  const h = setup(["a"]);
+  h.call("copySelection");
+  h.state.selected = [];
+  // 화면 (210,120) → 캔버스 (380,160)
+  h.call("openContextMenuAt", rightClick(new TestElement()));
+  h.call("runMenuAction", "paste");
+  // a(320x220) 가운데 → (220,50)
+  assert.deepEqual(h.state.history.present.nodes.at(-1)!.position, {
+    x: 220,
+    y: 50,
+  });
+  assert.equal(h.state.history.past.length, 1);
+});
+
+test("menu key with nothing selected opens paste at the view center", () => {
+  const h = setup();
+  h.call("handleWorkspaceKeyDown", key("ContextMenu"));
+  assert.equal(h.state.contextMenu!.kind, "paste");
+  assert.equal(h.state.contextMenu!.left, 500);
+  assert.equal(h.state.contextMenu!.top, 350);
+  assert.deepEqual(h.state.contextMenu!.point, { x: 980, y: 660 });
+});
+
+test("no menu while drawing or during a gesture", () => {
+  const h = setup(["a"]);
+  h.state.tool = "pen";
+  const event = rightClick(new TestElement(false, true, { nodeId: "a" }));
+  h.call("openContextMenuAt", event);
+  assert.equal(h.state.contextMenu ?? null, null);
+  assert.equal(event.defaultPrevented, true);
+  const g = setup(["a"]);
+  g.gestureRef.current = { kind: "pan" };
+  g.call("openContextMenuAt", rightClick(new TestElement()));
+  assert.equal(g.state.contextMenu ?? null, null);
+});
+
+test("menu cut removes the selection in one undo step", () => {
+  const h = setup(["a"]);
+  h.call(
+    "openContextMenuAt",
+    rightClick(new TestElement(false, true, { nodeId: "a" })),
+  );
+  h.call("runMenuAction", "cut");
+  assert.equal(h.state.history.present.nodes.length, 2);
+  assert.equal(h.state.history.past.length, 1);
+  assert.equal(h.state.clip!.nodes[0].id, "a");
+});
+
+test("clipboard keys do nothing behind the open image viewer", () => {
+  const h = setup(["a"]);
+  h.call("handleCopy", clipEvent(new TestElement()));
+  h.state.viewer = "a";
+  const cut = clipEvent(new TestElement());
+  h.call("handleCut", cut);
+  assert.equal(h.state.history.present.nodes.length, 3);
+  assert.equal(cut.defaultPrevented, false);
+  const paste = clipEvent(new TestElement(), clipboardData("A\n본문"));
+  h.call("handlePaste", paste);
+  assert.equal(h.state.history.present.nodes.length, 3);
+  assert.equal(paste.defaultPrevented, false);
+  h.state.clip = null;
+  h.call("handleCopy", clipEvent(new TestElement()));
+  assert.equal(h.state.clip ?? null, null);
 });

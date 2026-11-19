@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import {
   useCallback,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useMemo,
   useReducer,
@@ -15,8 +16,8 @@ import {
 import { v4 as uuidv4 } from "uuid";
 import type {
   KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
-  ClipboardEvent as ReactClipboardEvent,
 } from "react";
 import TextNodeView from "./text-node-view";
 import ImageNodeView from "./image-node-view";
@@ -36,7 +37,12 @@ import {
 } from "./search";
 import SearchPanel from "./search-panel";
 import { roleForConnectedNode, setRole, setTodoDone } from "./roles";
-import { spaceBelongsToControl, wheelStaysInRegion } from "./keyboard-targets";
+import {
+  copiesNodes,
+  hasSelectedText,
+  spaceBelongsToControl,
+  wheelStaysInRegion,
+} from "./keyboard-targets";
 import {
   addChecklistItem,
   buildChecklist,
@@ -44,6 +50,23 @@ import {
   removeChecklistItem,
 } from "./checklist";
 import ChecklistNodeView from "./checklist-node-view";
+import GroupLayer from "./group-layer";
+import {
+  canJoinByDrag,
+  groupAtPoint,
+  groupNodes,
+  joinGroup,
+  renameGroup,
+  ungroupNodes,
+} from "./groups";
+import {
+  makeClip,
+  pasteClip,
+  PASTE_ERROR_NOTICES,
+  selectedGroupIds,
+  type NodeClip,
+} from "./node-clipboard";
+import NodeContextMenu, { type ContextMenuEntry } from "./node-context-menu";
 import ConnectNodeMenu from "./connect-node-menu";
 import ConflictPanel from "./conflict-panel";
 import ImageViewer from "./image-viewer";
@@ -85,6 +108,7 @@ import {
   countNodesDrawingPoints,
   exceedsDrawingLimits,
   countDocumentDrawingPoints,
+  DRAWING_LIMIT_NOTICE,
   eraseStrokes,
   MAX_DRAWING_POINTS,
   MAX_STROKES_PER_CANVAS,
@@ -162,6 +186,8 @@ type Gesture =
       startPositions: Map<string, Point>;
       bounds: { left: number; top: number; right: number; bottom: number };
       zoom: number;
+      /** 놓으면 들어갈 그룹(끄는 노드가 모두 그룹 없을 때만). */
+      joinGroupId?: string | null;
     }
   | {
       kind: "resize";
@@ -215,7 +241,6 @@ type Gesture =
 // 화면 기준 거리. 캔버스 단위로는 zoom으로 나눈다.
 const DRAW_MIN_DISTANCE = 1.5;
 const ERASER_RADIUS = 10;
-const DRAWING_LIMIT_NOTICE = `그림은 한 공간에 선 ${MAX_STROKES_PER_CANVAS.toLocaleString()}개, 프로젝트 전체에 점 ${(MAX_DRAWING_POINTS / 10000).toLocaleString()}만 개까지 그릴 수 있어요.`;
 
 type SelectionRect = Point & { width: number; height: number };
 
@@ -245,6 +270,26 @@ const NUDGE_STEP_LARGE = 40;
 const CONNECT_MENU_MIN_DRAG = 8;
 
 /** 연결선을 빈 곳에 놓았을 때 뜨는 노드 종류 메뉴. */
+/** 우클릭 메뉴 상태. field는 글자 메뉴에서 연 칸과 그때의 선택 범위. */
+type ContextMenuState = {
+  left: number;
+  top: number;
+  point: Point;
+  kind: "nodes" | "paste" | "text";
+  field?: {
+    element: HTMLInputElement | HTMLTextAreaElement;
+    start: number;
+    end: number;
+  };
+};
+
+/** 복사·잘라내기·붙여넣기 이벤트에서 쓰는 부분(문서 이벤트와 테스트 흉내 모두). */
+type ClipboardInput = {
+  target: EventTarget | null;
+  clipboardData: DataTransfer | null;
+  preventDefault: () => void;
+};
+
 type ConnectMenuState = {
   /** 뷰포트 기준 위치. */
   left: number;
@@ -350,6 +395,14 @@ export default function Workspace({
   const [eraserPointer, setEraserPointer] = useState<Point | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  /** 앱 안 클립보드(같은 탭). 새로고침하면 사라진다. */
+  const clipboardRef = useRef<NodeClip | null>(null);
+  // 메뉴의 "붙여넣기"를 켤지(렌더 중에는 ref를 읽지 않는다).
+  const [hasClip, setHasClip] = useState(false);
+  /** 뷰포트 위 마지막 포인터(화면 좌표). 밖으로 나가면 null — Ctrl+V 붙일 자리. */
+  const lastPointerRef = useRef<{ clientX: number; clientY: number } | null>(
+    null,
+  );
   const imageTargetRef = useRef<{ nodeId: string; path: string[] } | null>(
     null,
   );
@@ -430,6 +483,10 @@ export default function Workspace({
     null,
   );
   const [connectMenu, setConnectMenu] = useState<ConnectMenuState | null>(null);
+  // 노드를 끄는 동안 커서 아래에 있어 놓으면 들어갈 그룹(진하게 표시).
+  const [joinTargetId, setJoinTargetId] = useState<string | null>(null);
+  // 우클릭(메뉴 키) 메뉴. 위치는 뷰포트 기준, point는 붙여넣을 캔버스 좌표.
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   // 다른 공간으로 옮기면(뒤로 가기 포함) 이전 공간의 선택은 의미가 없으므로 비운다.
   const [selectionCanvasKey, setSelectionCanvasKey] = useState(canvasKey);
   if (selectionCanvasKey !== canvasKey) {
@@ -437,6 +494,7 @@ export default function Workspace({
     setSelectedNodeIds([]);
     setSelectedConnectionId(null);
     setConnectMenu(null);
+    setContextMenu(null);
   }
   const [isPanning, setIsPanning] = useState(false); //드래그 상태따라 커서 변경
   const [spaceHeld, setSpaceHeld] = useState(false);
@@ -483,6 +541,7 @@ export default function Workspace({
     setSelectionRect(null);
     setConnectionDraft(null);
     setDrawDraft(null);
+    setJoinTargetId(null);
 
     if (
       gesture?.kind === "node" ||
@@ -1136,6 +1195,19 @@ export default function Workspace({
       nudgeSelection(dx, dy);
       return true;
     }
+    // G로 그룹화, Shift+G로 그룹화 해제.
+    if (key === "g" && selectedNodeIds.length) {
+      event.preventDefault();
+      if (event.shiftKey) ungroupSelection();
+      else groupSelection();
+      return true;
+    }
+    // 메뉴 키·Shift+F10: 선택이 있으면 노드 메뉴, 없으면 화면 가운데에 붙여넣기 메뉴.
+    if (event.key === "ContextMenu" || (event.shiftKey && key === "f10")) {
+      event.preventDefault();
+      openMenuFromKeyboard();
+      return true;
+    }
     // "+"는 대부분의 자판에서 Shift가 필요하므로 확대 키는 Shift와 무관하게 받는다.
     const zoomActions: Record<string, () => void> = {
       "+": () => zoomBy(1.25),
@@ -1285,7 +1357,47 @@ export default function Workspace({
     const draggedNodes = selectedNodeIds.includes(node.id)
       ? workspace.nodes.filter((item) => selectedNodeIds.includes(item.id))
       : [node];
+    beginNodeGesture(event, draggedNodes);
+  }
 
+  /** 그룹 이름 탭을 잡으면 멤버 모두를 선택하고 함께 끈다(노드 끌기와 같은 제스처). */
+  function startGroupDrag(
+    event: ReactPointerEvent<HTMLElement>,
+    groupId: string,
+  ) {
+    if (event.button !== 0 || gestureRef.current || !viewportRef.current)
+      return;
+    const members = workspace.nodes.filter((item) => item.groupId === groupId);
+    if (members.length === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.shiftKey) {
+      // Shift: 이미 고른 그룹이면 선택에서 빼고, 아니면 지금 선택에 더해 함께 끈다.
+      if (selectedGroupIds(workspace, selectedNodeIds).includes(groupId)) {
+        const memberIds = new Set(members.map((item) => item.id));
+        setSelectedNodeIds(selectedNodeIds.filter((id) => !memberIds.has(id)));
+        viewportRef.current.focus({ preventScroll: true });
+        return;
+      }
+      beginNodeGesture(
+        event,
+        workspace.nodes.filter(
+          (item) =>
+            item.groupId === groupId || selectedNodeIds.includes(item.id),
+        ),
+      );
+      return;
+    }
+    beginNodeGesture(event, members);
+  }
+
+  /** 노드들을 함께 끄는 제스처를 시작한다. 3px 넘게 움직이기 전까지는 클릭으로 남는다. */
+  function beginNodeGesture(
+    event: ReactPointerEvent<HTMLElement>,
+    draggedNodes: WorkspaceNode[],
+  ) {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
     viewport.focus({ preventScroll: true });
     dispatchHistory({ type: "begin" });
     gestureRef.current = {
@@ -1631,12 +1743,43 @@ export default function Workspace({
 
       return changed ? { ...current, nodes } : current;
     });
+
+    // 끄는 노드가 모두 그룹이 없으면 커서 아래 그룹을 들어갈 곳으로 표시한다.
+    if (gesture.kind === "node") {
+      const dragged = workspace.nodes.filter((node) =>
+        gesture.startPositions.has(node.id),
+      );
+      const pointer = getCanvasPoint(event.clientX, event.clientY);
+      const joinGroupId =
+        pointer && canJoinByDrag(dragged)
+          ? groupAtPoint(workspace, pointer)
+          : null;
+      if (joinGroupId !== (gesture.joinGroupId ?? null)) {
+        gesture.joinGroupId = joinGroupId;
+        setJoinTargetId(joinGroupId);
+      }
+    }
   }
 
   function endGesture(event: ReactPointerEvent<HTMLDivElement>) {
     const gesture = gestureRef.current;
 
     if (!gesture || gesture.pointerId !== event.pointerId) return;
+
+    // 손을 떼면 표시된 그룹에 들어간다. 끌기와 같은 실행 취소 단계(커밋 전)에 넣는다.
+    if (
+      gesture.kind === "node" &&
+      event.type === "pointerup" &&
+      gesture.joinGroupId
+    ) {
+      const nodeIds = [...gesture.startPositions.keys()];
+      const groupId = gesture.joinGroupId;
+      const path = canvasPath.slice(0, activeDepth);
+      dispatchHistory({
+        type: "change",
+        update: (root) => joinGroup(root, path, nodeIds, groupId),
+      });
+    }
 
     // 취소나 포인터 캡처 해제에서는 연결을 만들지 않는다.
     let menu: ConnectMenuState | null = null;
@@ -1955,6 +2098,233 @@ export default function Workspace({
     setSelectedConnectionId(null);
   }
 
+  /** 선택한 노드를 새 그룹으로 묶는다(실행 취소 한 단계). */
+  function groupSelection() {
+    if (gestureRef.current || selectedNodeIds.length === 0) return;
+    const path = canvasPath.slice(0, activeDepth);
+    const nodeIds = selectedNodeIds;
+    // 갱신 함수 안에서도 같은 ID를 쓰도록 미리 만든다.
+    const groupId = uuidv4();
+    const preview = groupNodes(rootDocument, path, nodeIds, () => groupId);
+    if ("error" in preview) {
+      setNotice(preview.error);
+      return;
+    }
+    dispatchHistory({ type: "commit" });
+    dispatchHistory({
+      type: "change",
+      update: (root) => {
+        const result = groupNodes(root, path, nodeIds, () => groupId);
+        return "document" in result ? result.document : root;
+      },
+    });
+    // 포커스가 있던 탭이 사라질 수 있으니 캔버스로 돌려 단축키가 계속 들어오게 한다.
+    viewportRef.current?.focus({ preventScroll: true });
+  }
+
+  /** 선택한 노드를 그룹에서 뺀다(실행 취소 한 단계). */
+  function ungroupSelection() {
+    if (gestureRef.current || selectedNodeIds.length === 0) return;
+    const path = canvasPath.slice(0, activeDepth);
+    const nodeIds = selectedNodeIds;
+    dispatchHistory({ type: "commit" });
+    dispatchHistory({
+      type: "change",
+      update: (root) => ungroupNodes(root, path, nodeIds),
+    });
+    viewportRef.current?.focus({ preventScroll: true });
+  }
+
+  /**
+   * 메뉴 키로 메뉴를 열 때. 선택이 있으면 첫 노드의 왼쪽 위 근처에 노드 메뉴,
+   * 없으면 화면 가운데에 붙여넣기 메뉴.
+   */
+  function openMenuFromKeyboard() {
+    if (tool !== "select" || gestureRef.current) return;
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const node = workspace.nodes.find((item) =>
+      selectedNodeIds.includes(item.id),
+    );
+    if (node) {
+      setContextMenu({
+        left: node.position.x * camera.zoom + camera.x + 16,
+        top: node.position.y * camera.zoom + camera.y + 16,
+        point: pastePoint(),
+        kind: "nodes",
+      });
+      return;
+    }
+    const rect = viewport.getBoundingClientRect();
+    setContextMenu({
+      left: rect.width / 2,
+      top: rect.height / 2,
+      point: {
+        x: (rect.width / 2 - camera.x) / camera.zoom,
+        y: (rect.height / 2 - camera.y) / camera.zoom,
+      },
+      kind: "paste",
+    });
+  }
+
+  /**
+   * 작업영역 우클릭: 그 자리에 맞는 메뉴를 연다. 브라우저 메뉴는 늘 막는다.
+   * 노드·이름 탭 → 그것을 고르고 노드 메뉴, 빈 곳 → 선택이 있으면 노드 메뉴·없으면 붙여넣기,
+   * 글 칸 → 고른 글자가 있으면 글자 메뉴(노드 안 칸은 글자가 없으면 노드 메뉴).
+   */
+  function openContextMenuAt(event: ReactMouseEvent<HTMLDivElement>) {
+    event.preventDefault();
+    if (tool !== "select" || gestureRef.current) return;
+    const target = event.target instanceof Element ? event.target : null;
+    const viewport = viewportRef.current;
+    const point = getCanvasPoint(event.clientX, event.clientY);
+    if (!target || !viewport || !point) return;
+    const rect = viewport.getBoundingClientRect();
+    const at = {
+      left: event.clientX - rect.left,
+      top: event.clientY - rect.top,
+      point,
+    };
+
+    const field = target.closest("input, textarea, [contenteditable='true']");
+    if (field) {
+      if (hasSelectedText(field)) {
+        const text = field as HTMLInputElement | HTMLTextAreaElement;
+        if (typeof text.selectionStart === "number")
+          setContextMenu({
+            ...at,
+            kind: "text",
+            field: {
+              element: text,
+              start: text.selectionStart,
+              end: text.selectionEnd ?? text.selectionStart,
+            },
+          });
+        return;
+      }
+      if (!field.closest("[data-node-id]")) return;
+    }
+
+    const nodeId =
+      target.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
+    if (nodeId) {
+      if (!selectedNodeIds.includes(nodeId)) {
+        setSelectedNodeIds([nodeId]);
+        setSelectedConnectionId(null);
+      }
+      setContextMenu({ ...at, kind: "nodes" });
+      return;
+    }
+    const groupId =
+      target.closest<HTMLElement>("[data-group-id]")?.dataset.groupId;
+    if (groupId) {
+      if (!selectedGroupIds(workspace, selectedNodeIds).includes(groupId)) {
+        setSelectedNodeIds(
+          workspace.nodes
+            .filter((item) => item.groupId === groupId)
+            .map((item) => item.id),
+        );
+        setSelectedConnectionId(null);
+      }
+      setContextMenu({ ...at, kind: "nodes" });
+      return;
+    }
+    setContextMenu({
+      ...at,
+      kind: selectedNodeIds.length ? "nodes" : "paste",
+    });
+  }
+
+  /** 메뉴의 "복사": 앱 클립보드에 담고 시스템 클립보드에 글을 쓴다(실패하면 표시만). */
+  function copyFromMenu(): NodeClip | null {
+    const clip = copySelection();
+    if (!clip) return null;
+    const markUnsynced = () => {
+      if (clipboardRef.current === clip)
+        clipboardRef.current = { ...clip, systemSynced: false };
+    };
+    const clipboard = globalThis.navigator?.clipboard;
+    if (clipboard) clipboard.writeText(clip.text).catch(markUnsynced);
+    else markUnsynced();
+    return clip;
+  }
+
+  /** 글자 메뉴 동작. 메뉴를 열 때 기억한 범위를 되살려 그 칸에 적용한다. */
+  async function runTextAction(
+    action: "cut" | "copy" | "paste",
+    field: NonNullable<ContextMenuState["field"]>,
+  ) {
+    const { element, start, end } = field;
+    const restore = () => {
+      element.focus({ preventScroll: true });
+      element.setSelectionRange(start, end);
+    };
+    restore();
+    if (action !== "paste") {
+      // 브라우저 실행 취소에 남도록 칸 자체의 잘라내기·복사를 쓴다.
+      globalThis.document.execCommand(action);
+      return;
+    }
+    try {
+      const text = await globalThis.navigator.clipboard.readText();
+      restore();
+      globalThis.document.execCommand("insertText", false, text);
+    } catch {
+      setNotice("붙여넣기는 Ctrl+V를 써 주세요.");
+    }
+  }
+
+  /** 메뉴 종류에 맞는 항목들(데이터만, 동작은 runMenuAction). */
+  function contextMenuItems(menu: ContextMenuState): ContextMenuEntry[] {
+    const mod = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform ?? "")
+      ? "⌘"
+      : "Ctrl+";
+    const cut = { id: "cut", label: "잘라내기", shortcut: `${mod}X` };
+    const copy = { id: "copy", label: "복사", shortcut: `${mod}C` };
+    const paste = { id: "paste", label: "붙여넣기", shortcut: `${mod}V` };
+    if (menu.kind === "text") return [cut, copy, paste];
+    const pasteEntry = { ...paste, disabled: !hasClip };
+    if (menu.kind !== "nodes") return [pasteEntry];
+    const canUngroup = workspace.nodes.some(
+      (node) => selectedNodeIds.includes(node.id) && !!node.groupId,
+    );
+    return [
+      cut,
+      copy,
+      pasteEntry,
+      "separator",
+      { id: "group", label: "그룹화", shortcut: "G" },
+      ...(canUngroup
+        ? [{ id: "ungroup", label: "그룹화 해제", shortcut: "Shift+G" }]
+        : []),
+    ];
+  }
+
+  /** 메뉴 항목을 실행한다. */
+  function runMenuAction(id: string) {
+    const menu = contextMenu;
+    if (!menu) return;
+    if (menu.kind === "text") {
+      if (menu.field && (id === "cut" || id === "copy" || id === "paste"))
+        void runTextAction(id, menu.field);
+      return;
+    }
+    if (id === "cut") {
+      if (copyFromMenu()) deleteSelection();
+    } else if (id === "copy") copyFromMenu();
+    else if (id === "paste") pasteAt(menu.point);
+    else if (id === "group") groupSelection();
+    else if (id === "ungroup") ungroupSelection();
+  }
+
+  /** 메뉴를 닫고 포커스를 돌린다: 글자 메뉴면 그 칸, 아니면 캔버스. */
+  function closeContextMenu() {
+    const field = contextMenu?.field;
+    setContextMenu(null);
+    if (field) field.element.focus({ preventScroll: true });
+    else viewportRef.current?.focus({ preventScroll: true });
+  }
+
   /** 지금 공간 문서를 바꾸는 체크리스트·역할 편집 한 번(실행 취소 한 단계). */
   function applyDocumentChange(
     update: (root: WorkspaceDocument, path: string[]) => WorkspaceDocument,
@@ -2089,20 +2459,33 @@ export default function Workspace({
     fileInputRef.current?.click();
   }
 
-  function handlePaste(event: ReactClipboardEvent<HTMLElement>) {
+  function handlePaste(event: ClipboardInput) {
+    const data = event.clipboardData;
+    if (!data || clipboardBlocked(event.target)) return;
     if (
       gestureRef.current ||
       (event.target instanceof Element &&
         event.target.closest("input, textarea, [contenteditable='true']"))
     )
       return;
-    const file = Array.from(event.clipboardData.files).find((file) =>
+    const file = Array.from(data.files).find((file) =>
       file.type.startsWith("image/"),
     );
+    // 시스템 클립보드의 글이 복사해 둔 노드의 글과 같으면(= 마지막 복사가 노드) 노드를 붙인다.
+    const clip = clipboardRef.current;
+    if (!file && clip) {
+      const plain = (value: string) => value.replace(/\r\n/g, "\n").trim();
+      const text = data.getData("text/plain");
+      if (!clip.systemSynced || plain(text) === plain(clip.text)) {
+        event.preventDefault();
+        pasteAt(pastePoint());
+        return;
+      }
+    }
     if (!file) {
       // 웹 주소 하나를 붙여넣으면 링크 노드로 만든다.
       // 일반 글을 붙여넣은 것과 구분하려고 http(s)://로 시작하는 주소만 받는다.
-      const text = event.clipboardData.getData("text/plain").trim();
+      const text = data.getData("text/plain").trim();
       const url = /^https?:\/\//i.test(text) ? normalizeLinkUrl(text) : null;
       if (!url) return;
       event.preventDefault();
@@ -2119,6 +2502,98 @@ export default function Workspace({
       selected?.type === "image_node" ? selected.id : addNode("image_node");
     if (nodeId)
       void imageUploads.upload(nodeId, file, canvasPath.slice(0, activeDepth));
+  }
+
+  // 복사·잘라내기·붙여넣기는 문서에서 받는다. 캔버스(포커스된 div)에 고른 글자가 없으면
+  // 브라우저가 이 이벤트를 <body>로 보내 <main>의 React 핸들러에 닿지 않기 때문이다.
+  const onClipboardEvent = useEffectEvent((event: ClipboardEvent) => {
+    if (event.type === "copy") handleCopy(event);
+    else if (event.type === "cut") handleCut(event);
+    else handlePaste(event);
+  });
+  useEffect(() => {
+    const listen = (event: Event) => onClipboardEvent(event as ClipboardEvent);
+    const types = ["copy", "cut", "paste"] as const;
+    for (const type of types) document.addEventListener(type, listen);
+    return () => {
+      for (const type of types) document.removeEventListener(type, listen);
+    };
+  }, []);
+
+  /**
+   * 이미지 보기 같은 모달이 열려 있으면 복사·잘라내기·붙여넣기가 뒤의 캔버스를 바꾸지 않게 한다.
+   * 문서에서 듣는 이벤트라 모달의 stopPropagation으로는 막히지 않는다.
+   */
+  function clipboardBlocked(target: EventTarget | null): boolean {
+    if (viewerNodeId) return true;
+    return target instanceof Element && !!target.closest("dialog[open]");
+  }
+
+  /** 선택한 노드를 앱 클립보드에 담는다. 담은 묶음(없으면 null). */
+  function copySelection(): NodeClip | null {
+    if (gestureRef.current || !selectedNodeIds.length) return null;
+    const clip = makeClip(workspace, selectedNodeIds);
+    if (clip) {
+      clipboardRef.current = clip;
+      setHasClip(true);
+    }
+    return clip;
+  }
+
+  /** Ctrl+V가 붙일 자리: 뷰포트 위 마지막 포인터, 없으면 화면 가운데(캔버스 좌표). */
+  function pastePoint(): Point {
+    const pointer = lastPointerRef.current;
+    if (pointer)
+      return getCanvasPoint(pointer.clientX, pointer.clientY) ?? { x: 0, y: 0 };
+    const viewport = viewportRef.current;
+    if (!viewport) return { x: 0, y: 0 };
+    const rect = viewport.getBoundingClientRect();
+    return {
+      x: (rect.width / 2 - camera.x) / camera.zoom,
+      y: (rect.height / 2 - camera.y) / camera.zoom,
+    };
+  }
+
+  /** 앱 클립보드를 point(캔버스 좌표)에 붙인다. 실행 취소 한 단계. */
+  function pasteAt(point: Point) {
+    const clip = clipboardRef.current;
+    if (!clip || gestureRef.current) return;
+    const result = pasteClip(
+      rootDocument,
+      canvasPath.slice(0, activeDepth),
+      clip,
+      point,
+    );
+    if ("error" in result) {
+      setNotice(PASTE_ERROR_NOTICES[result.error]);
+      return;
+    }
+    dispatchHistory({ type: "commit" });
+    dispatchHistory({ type: "change", update: () => result.document });
+    setSelectedNodeIds(result.nodeIds);
+    setSelectedConnectionId(null);
+    viewportRef.current?.focus({ preventScroll: true });
+  }
+
+  /** Ctrl+C: 캔버스(또는 고른 글자가 없는 노드 안 글 칸)에서는 노드를 복사한다. */
+  function handleCopy(event: ClipboardInput) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (clipboardBlocked(target) || !copiesNodes(target)) return;
+    const clip = copySelection();
+    if (!clip) return;
+    event.clipboardData?.setData("text/plain", clip.text);
+    event.preventDefault();
+  }
+
+  /** Ctrl+X: 복사와 같은 규칙으로 노드를 잘라낸다. */
+  function handleCut(event: ClipboardInput) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (clipboardBlocked(target) || !copiesNodes(target)) return;
+    const clip = copySelection();
+    if (!clip) return;
+    event.clipboardData?.setData("text/plain", clip.text);
+    event.preventDefault();
+    deleteSelection();
   }
 
   /** 링크 노드의 주소를 정하고 서버에 미리보기를 요청한다. */
@@ -2449,6 +2924,8 @@ export default function Workspace({
           .map((node) => node.id),
       )
     : undefined;
+  // 멤버 전부가 선택된 그룹: 노드 테두리 대신 그룹 영역에 선택 표시를 한다.
+  const wholeGroups = selectedGroupIds(workspace, selectedNodeIds);
   const viewerNode = workspace.nodes.find(
     (node): node is ImageNode & { image: ImageReference } =>
       node.id === viewerNodeId && node.type === "image_node" && !!node.image,
@@ -2466,7 +2943,6 @@ export default function Workspace({
     <main
       className="chrome-no-select fixed inset-0 flex flex-col bg-mist-deep text-bark caret-ink [color-scheme:light]"
       onKeyDown={handleWorkspaceKeyDown}
-      onPaste={handlePaste}
     >
       <input
         ref={fileInputRef}
@@ -2803,11 +3279,19 @@ export default function Workspace({
           onPointerDownCapture={startPan}
           onPointerDown={tool === "select" ? startMarquee : startDrawing}
           onPointerMove={(event) => {
+            lastPointerRef.current = {
+              clientX: event.clientX,
+              clientY: event.clientY,
+            };
             if (tool === "eraser")
               setEraserPointer({ x: event.clientX, y: event.clientY });
             moveGesture(event);
           }}
-          onPointerLeave={() => setEraserPointer(null)}
+          onPointerLeave={() => {
+            lastPointerRef.current = null;
+            setEraserPointer(null);
+          }}
+          onContextMenu={openContextMenuAt}
           onPointerUp={endGesture}
           onPointerCancel={endGesture}
           onLostPointerCapture={endGesture}
@@ -2833,6 +3317,26 @@ export default function Workspace({
               strokes={workspace.drawing?.strokes ?? []}
               draft={drawDraft}
             />
+            <GroupLayer
+              document={workspace}
+              joinTargetId={joinTargetId}
+              selectedGroupIds={wholeGroups}
+              interactive={tool === "select"}
+              onTabPointerDown={startGroupDrag}
+              onSelectMembers={(groupId) => {
+                setSelectedNodeIds(
+                  workspace.nodes
+                    .filter((item) => item.groupId === groupId)
+                    .map((item) => item.id),
+                );
+                setSelectedConnectionId(null);
+              }}
+              onRename={(groupId, title) =>
+                applyDocumentChange((root, path) =>
+                  renameGroup(root, path, groupId, title),
+                )
+              }
+            />
             <ConnectionLayer
               canvas={workspace.canvas}
               nodes={workspace.nodes}
@@ -2847,6 +3351,9 @@ export default function Workspace({
             {workspace.nodes.map((node) => {
               const frame = {
                 selected: selectedNodeIds.includes(node.id),
+                showSelection:
+                  selectedNodeIds.includes(node.id) &&
+                  !(node.groupId && wholeGroups.includes(node.groupId)),
                 zoom: camera.zoom,
                 showPorts:
                   connectionDraft?.source.nodeId === node.id ||
@@ -2951,6 +3458,16 @@ export default function Workspace({
           >
             <FitIcon size={20} />
           </button>
+          {contextMenu && (
+            <NodeContextMenu
+              left={contextMenu.left}
+              top={contextMenu.top}
+              label={contextMenu.kind === "text" ? "글자 메뉴" : "작업 메뉴"}
+              items={contextMenuItems(contextMenu)}
+              onSelect={runMenuAction}
+              onClose={closeContextMenu}
+            />
+          )}
           {connectMenu && (
             <ConnectNodeMenu
               left={connectMenu.left}
