@@ -6,7 +6,11 @@ import type { WorkspaceDocument, WorkspaceNode } from "./types";
  * 경로는 캔버스 노드 ID를 '/'로 이은 것(루트는 빈 문자열). 서버·브라우저 공용 순수 함수.
  */
 export type Entries = Map<string, unknown>;
-export type Patch = { set: Record<string, unknown>; del: string[] };
+/**
+ * 한 단계. set은 [키, 값] 목록(순서가 곧 그린·만든 순서). DB의 JSONB는 객체 키를 정렬하므로
+ * 순서를 지키려고 객체가 아닌 목록으로 둔다.
+ */
+export type Patch = { set: [string, unknown][]; del: string[] };
 
 type Shell = {
   canvas: WorkspaceDocument["canvas"];
@@ -159,32 +163,33 @@ function sameValue(a: unknown, b: unknown): boolean {
 
 /** 두 항목 묶음의 차이: 새로 생기거나 바뀐 항목은 set, 사라진 항목은 del(키만). */
 export function diffEntries(before: Entries, after: Entries): Patch {
-  const set: Record<string, unknown> = {};
+  const set: [string, unknown][] = [];
   for (const [key, value] of after)
     if (!before.has(key) || !sameValue(before.get(key), value))
-      set[key] = value;
+      set.push([key, value]);
   const del = [...before.keys()].filter((key) => !after.has(key));
   return { set, del };
 }
 
 export function isEmptyPatch(patch: Patch) {
-  return Object.keys(patch.set).length === 0 && patch.del.length === 0;
+  return patch.set.length === 0 && patch.del.length === 0;
 }
 
 /** 항목 묶음에 한 단계를 적용한다(제자리에서 바꾼다). */
 export function applyPatch(entries: Entries, patch: Patch) {
   for (const key of patch.del) entries.delete(key);
-  for (const [key, value] of Object.entries(patch.set)) entries.set(key, value);
+  for (const [key, value] of patch.set) entries.set(key, value);
 }
 
 /** 두 단계를 하나로 합친다(오래된 기록 묶기). 차례로 적용한 것과 결과가 같다. */
 export function composePatches(first: Patch, second: Patch): Patch {
-  const set: Record<string, unknown> = { ...first.set };
-  for (const key of second.del) delete set[key];
-  Object.assign(set, second.set);
-  const del = new Set(first.del.filter((key) => !(key in second.set)));
+  const set = new Map(first.set);
+  for (const key of second.del) set.delete(key);
+  for (const [key, value] of second.set) set.set(key, value);
+  const added = new Set(second.set.map(([key]) => key));
+  const del = new Set(first.del.filter((key) => !added.has(key)));
   for (const key of second.del) del.add(key);
-  return { set, del: [...del] };
+  return { set: [...set], del: [...del] };
 }
 
 /**
@@ -252,7 +257,7 @@ export function estimatedSteps(entries: Entries): Patch[] {
         if (shown.has(value.source.nodeId) && shown.has(value.target.nodeId))
           take(conn, set);
       }
-      steps.push({ set, del: [] });
+      steps.push({ set: Object.entries(set), del: [] });
     }
 
     const strokes = keys.filter((key) => key.startsWith("stroke|"));
@@ -261,15 +266,15 @@ export function estimatedSteps(entries: Entries): Patch[] {
       pending = {};
       for (const key of strokes.slice(i, i + ESTIMATED_STROKES_PER_STEP))
         take(key, set);
-      steps.push({ set, del: [] });
+      steps.push({ set: Object.entries(set), del: [] });
     }
     // 남은 것(멤버 없는 그룹, 끝이 없는 연결선 등)은 이 캔버스 마지막 단계에.
     const rest = pending;
     for (const key of keys) take(key, rest);
     if (Object.keys(rest).length) {
       if (steps.length && Object.keys(pending).length === 0)
-        Object.assign(steps.at(-1)!.set, rest);
-      else steps.push({ set: rest, del: [] });
+        steps.at(-1)!.set.push(...Object.entries(rest));
+      else steps.push({ set: Object.entries(rest), del: [] });
     }
     for (const id of canvases) reveal(childPath(path, id));
   };
@@ -277,7 +282,8 @@ export function estimatedSteps(entries: Entries): Patch[] {
   // 어느 캔버스에도 닿지 않는 항목(깨진 경로)도 빠뜨리지 않는다.
   const leftovers: Record<string, unknown> = {};
   for (const key of entries.keys()) take(key, leftovers);
-  if (Object.keys(leftovers).length) steps.push({ set: leftovers, del: [] });
+  if (Object.keys(leftovers).length)
+    steps.push({ set: Object.entries(leftovers), del: [] });
   return steps;
 }
 
@@ -310,7 +316,7 @@ export function pathChanges(
     else if (parsed.kind === "stroke" && !before.has(key))
       strokes.push(parsed.id);
   };
-  for (const key of Object.keys(patch.set)) consider(key, false);
+  for (const [key] of patch.set) consider(key, false);
   for (const key of patch.del) consider(key, true);
   return { entered, changed, strokes, touched };
 }

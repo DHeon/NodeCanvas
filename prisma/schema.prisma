@@ -23,32 +23,48 @@ model User {
 }
 
 model Project {
-  id        String   @id @default(uuid()) @db.Uuid
-  title     String   @db.VarChar(120)
-  ownerId   String   @db.Uuid
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  document Json? @db.JsonB
-  documentVersion Int   @default(0)
-  images ImageAsset[]
-  
+  id              String           @id @default(uuid()) @db.Uuid
+  title           String           @db.VarChar(120)
+  ownerId         String           @db.Uuid
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  owner           User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  document        Json?            @db.JsonB
+  documentVersion Int              @default(0)
+  images          ImageAsset[]
+  history         ProjectHistory[]
+
   @@index([ownerId])
   @@map("project")
 }
 
 model ImageAsset {
-  id        String   @id @default(uuid()) @db.Uuid
-  projectId String   @db.Uuid
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  data      Bytes    @db.ByteA
-  width     Int
-  height    Int
+  id         String   @id @default(uuid()) @db.Uuid
+  projectId  String   @db.Uuid
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  data       Bytes    @db.ByteA
+  width      Int
+  height     Int
   byteLength Int
-  createdAt DateTime @default(now())
+  createdAt  DateTime @default(now())
 
   @@index([projectId])
   @@map("image_asset")
+}
+
+/// 타임랩스 기록: 저장마다 바뀐 항목(timelapse.ts의 Patch). seq 순서로 재생한다.
+model ProjectHistory {
+  id        String   @id @default(uuid()) @db.Uuid
+  seq       Int      @default(autoincrement())
+  projectId String   @db.Uuid
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  /// 기록이 시작되기 전에 이미 있던 내용(재생할 때 순서를 추정해 펼친다).
+  baseline  Boolean  @default(false)
+  patch     Json     @db.JsonB
+  createdAt DateTime @default(now())
+
+  @@index([projectId, seq])
+  @@map("project_history")
 }
 
 model Session {

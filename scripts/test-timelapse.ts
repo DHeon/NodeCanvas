@@ -93,7 +93,10 @@ test("diff records only what changed and deletions by key", () => {
   (next.nodes.find((n) => n.id === a.id) as { text: string }).text = "바뀜";
   next.drawing!.strokes.shift();
   const patch = diffEntries(flattenDocument(root), flattenDocument(next));
-  assert.deepEqual(Object.keys(patch.set), [`node||${a.id}`]);
+  assert.deepEqual(
+    patch.set.map(([key]) => key),
+    [`node||${a.id}`],
+  );
   assert.equal(patch.del.length, 1);
   assert.match(patch.del[0], /^stroke\|\|/);
   assert.deepEqual(
@@ -125,7 +128,7 @@ test("estimatedSteps reveals nodes top-left first, then strokes, sub-canvas afte
   const { root, a, b, c, sub } = fixture();
   const steps = estimatedSteps(flattenDocument(root));
   const firstStepWith = (key: string) =>
-    steps.findIndex((step) => key in step.set);
+    steps.findIndex((step) => step.set.some(([k]) => k === key));
   const nodeStep = (id: string, path = "") =>
     firstStepWith(`node|${path}|${id}`);
   assert.ok(nodeStep(a.id) < nodeStep(b.id));
@@ -147,10 +150,7 @@ test("estimatedSteps puts strokes in chunks of 20", () => {
   doc.drawing = { strokes: Array.from({ length: 45 }, stroke) };
   const steps = estimatedSteps(flattenDocument(doc));
   const strokeCounts = steps
-    .map(
-      (step) =>
-        Object.keys(step.set).filter((k) => k.startsWith("stroke|")).length,
-    )
+    .map((step) => step.set.filter(([k]) => k.startsWith("stroke|")).length)
     .filter(Boolean);
   assert.deepEqual(strokeCounts, [20, 20, 5]);
 });
@@ -176,4 +176,30 @@ test("pathChanges lists new nodes, changed nodes, new strokes for one canvas onl
   assert.deepEqual(subChanges.changed, [c.id]);
   const other = pathChanges(before, diffEntries(before, before), "");
   assert.equal(other.touched, false);
+});
+
+test("stroke order survives a store that sorts object keys (Postgres JSONB)", () => {
+  const doc = createWorkspace();
+  doc.drawing = { strokes: Array.from({ length: 12 }, stroke) };
+  const sortKeys = (value: unknown): unknown =>
+    Array.isArray(value)
+      ? value.map(sortKeys)
+      : value && typeof value === "object"
+        ? Object.fromEntries(
+            Object.keys(value)
+              .sort()
+              .map((key) => [
+                key,
+                sortKeys((value as Record<string, unknown>)[key]),
+              ]),
+          )
+        : value;
+  const stored = sortKeys(
+    JSON.parse(JSON.stringify(diffEntries(new Map(), flattenDocument(doc)))),
+  ) as ReturnType<typeof diffEntries>;
+  const rebuilt = replay([stored]);
+  assert.deepEqual(
+    rebuilt.drawing!.strokes.map((s) => s.id),
+    doc.drawing.strokes.map((s) => s.id),
+  );
 });
