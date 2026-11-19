@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, type Ref } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, type Ref } from "react";
 import { connectionColor } from "./connection-colors";
 import { CloseIcon, SearchIcon } from "./icons";
 import { hasSearchTerms, type SearchResult } from "./search";
@@ -21,7 +21,17 @@ type SearchPanelProps = {
   onPick: (result: SearchResult) => void;
   onClose: () => void;
   inputRef?: Ref<HTMLInputElement>;
+  /** 있으면 이 자리(작업영역 기준)에 띄운다(우클릭 검색). 없으면 오른쪽 위. */
+  at?: { left: number; top: number } | null;
+  /** 고른 노드 안에서만 찾을 때 그 노드 수. null이면 프로젝트 전체. */
+  scopeCount?: number | null;
+  /** 범위를 풀고 전체에서 찾는다. */
+  onWiden?: () => void;
+  /** 우클릭 검색창에서 포커스가 창 밖으로 나가면 부른다(포커스는 그대로 둔다). */
+  onDismiss?: () => void;
 };
+
+const EDGE_GAP = 8;
 
 const MAX_TAG_SUGGESTIONS = 6;
 const MAX_RESULT_DOTS = 3;
@@ -40,8 +50,24 @@ export default function SearchPanel({
   onPick,
   onClose,
   inputRef,
+  at = null,
+  scopeCount = null,
+  onWiden,
+  onDismiss,
 }: SearchPanelProps) {
   const listId = useId();
+  const panelRef = useRef<HTMLElement>(null);
+
+  // 우클릭한 자리에 띄울 때 작업영역 밖으로 넘치면 안쪽으로 당긴다.
+  useLayoutEffect(() => {
+    const panel = panelRef.current;
+    const parent = panel?.offsetParent;
+    if (!at || !panel || !(parent instanceof HTMLElement)) return;
+    const maxLeft = parent.clientWidth - panel.offsetWidth - EDGE_GAP;
+    const maxTop = parent.clientHeight - panel.offsetHeight - EDGE_GAP;
+    panel.style.left = `${Math.max(EDGE_GAP, Math.min(at.left, maxLeft))}px`;
+    panel.style.top = `${Math.max(EDGE_GAP, Math.min(at.top, maxTop))}px`;
+  });
   const tagsById = new Map(tags.map((tag) => [tag.id, tag]));
   const optionId = (index: number) => `${listId}-option-${index}`;
 
@@ -77,10 +103,29 @@ export default function SearchPanel({
 
   return (
     <section
+      ref={panelRef}
       data-search-panel=""
-      aria-label="노드 검색"
-      className="absolute top-3 right-10 z-40 flex max-h-[calc(100%-1.5rem)] w-80 max-w-[calc(100%-5rem)] flex-col rounded-xl border border-rule bg-white shadow-float"
+      aria-label={scopeCount === null ? "노드 검색" : "선택한 노드에서 검색"}
+      className={`absolute z-40 flex w-80 max-w-[calc(100%-5rem)] flex-col rounded-xl border border-rule bg-white shadow-float ${at ? "max-h-[min(28rem,calc(100%-1rem))]" : "top-3 right-10 max-h-[calc(100%-1.5rem)]"}`}
+      style={at ? { left: at.left, top: at.top } : undefined}
       onPointerDown={(event) => event.stopPropagation()}
+      onContextMenu={(event) => event.stopPropagation()}
+      onBlur={(event) => {
+        // 우클릭한 자리에 뜬 검색창은 다른 곳을 누르거나 Tab으로 나가면 닫힌다.
+        // 다른 창·탭으로 전환한 것(문서 자체가 포커스를 잃음)은 닫지 않는다.
+        if (!at || !onDismiss) return;
+        const panel = event.currentTarget;
+        if (
+          event.relatedTarget instanceof Node &&
+          panel.contains(event.relatedTarget)
+        )
+          return;
+        window.setTimeout(() => {
+          if (!panel.isConnected || !document.hasFocus()) return;
+          if (panel.contains(document.activeElement)) return;
+          onDismiss();
+        }, 0);
+      }}
     >
       <div className="flex items-center gap-2 border-b border-rule-soft px-3 py-2">
         <SearchIcon size={16} className="shrink-0 text-lichen" />
@@ -140,6 +185,22 @@ export default function SearchPanel({
         </button>
       </div>
 
+      {scopeCount !== null && (
+        <div className="flex items-center justify-between gap-2 border-b border-rule-soft px-3 py-1.5 text-xs text-bark-soft">
+          <span>선택한 노드 {scopeCount}개 안에서 찾아요</span>
+          {onWiden && (
+            <button
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={onWiden}
+              className="shrink-0 rounded-md px-1.5 py-0.5 text-moss-deep hover:bg-mist focus-visible:outline-2 focus-visible:outline-moss-deep"
+            >
+              전체에서 찾기
+            </button>
+          )}
+        </div>
+      )}
+
       {tagSuggestions.length > 0 && (
         <div
           className="flex flex-wrap gap-1.5 border-b border-rule-soft px-3 py-2"
@@ -150,7 +211,7 @@ export default function SearchPanel({
             <button
               key={tag.id}
               type="button"
-              onPointerDown={(event) => event.preventDefault()}
+              onMouseDown={(event) => event.preventDefault()}
               onClick={() => completeTag(tag)}
               className="flex items-center gap-1.5 rounded-full border border-rule px-2 py-0.5 text-xs text-bark-soft hover:bg-mist focus-visible:outline-2 focus-visible:outline-moss-deep"
             >
@@ -201,6 +262,7 @@ export default function SearchPanel({
                 role="option"
                 aria-selected={index === activeIndex}
                 onPointerEnter={() => onActiveChange(index)}
+                onMouseDown={(event) => event.preventDefault()}
                 onClick={() => onPick(result)}
                 className={`cursor-pointer rounded-lg px-2 py-1.5 ${index === activeIndex ? "bg-moss-wash" : ""}`}
               >

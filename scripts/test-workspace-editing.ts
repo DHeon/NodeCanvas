@@ -224,6 +224,9 @@ const names = [
   "contextMenuItems",
   "copyFromMenu",
   "runMenuAction",
+  "openSearchIn",
+  "closeSearch",
+  "dismissSearch",
   "applyDocumentChange",
   "openTagLens",
   "copySelection",
@@ -317,6 +320,8 @@ type TestState = {
   spaceHeld?: boolean;
   tool?: "select" | "pen" | "eraser";
   canvasPath?: string[];
+  searchScope?: { path: string[]; nodeIds: string[] } | null;
+  searchAt?: { left: number; top: number } | null;
   searchActive?: number | null;
   joinTarget?: string | null;
   contextMenu?: {
@@ -421,6 +426,8 @@ const factory = new Function(
   const setSearchOpen = value => { state.searchOpen = value; };
   const setSearchQuery = value => { state.searchQuery = value; };
   const setDebouncedQuery = value => { state.debouncedQuery = value; };
+  const setSearchScope = value => { state.searchScope = value; };
+  const setSearchAt = value => { state.searchAt = value; };
   const searchInputRef = { current: { focus() { state.calls.push("focus-search"); } } };
   const navigateCanvas = () => { state.calls.push("navigate"); };
   const addNode = type => { state.calls.push("add:" + type); return null; };
@@ -2056,6 +2063,8 @@ test("right-click on a node opens the node menu with cut, copy, paste and group"
     "붙여넣기",
     "separator",
     "그룹화",
+    "separator",
+    "검색",
   ]);
   assert.equal(entry(items, "paste").disabled, true);
   h.call("runMenuAction", "copy");
@@ -2069,7 +2078,10 @@ test("right-click on a grouped selection adds ungroup", () => {
     "openContextMenuAt",
     rightClick(new TestElement(false, true, { nodeId: "a" })),
   );
-  assert.deepEqual(labels(menuItems(h)).slice(-2), ["그룹화", "그룹화 해제"]);
+  assert.deepEqual(labels(menuItems(h)).slice(-4, -2), [
+    "그룹화",
+    "그룹화 해제",
+  ]);
 });
 
 test("right-click on empty space keeps the selection and opens the node menu", () => {
@@ -2305,7 +2317,7 @@ test("right-click on a node keeps the focused text selection too", () => {
   assert.deepEqual(h.state.selected, ["a"]);
 });
 
-test("right mouse down does not move focus or caret while text is selected", () => {
+test("right mouse down never moves focus, so a node field cannot shrink the selection", () => {
   const h = setup(["a"]);
   const down = (button: number) => ({
     button,
@@ -2316,7 +2328,7 @@ test("right mouse down does not move focus or caret while text is selected", () 
   });
   const plain = down(2);
   h.call("keepTextSelection", plain);
-  assert.equal(plain.defaultPrevented, false);
+  assert.equal(plain.defaultPrevented, true);
   h.state.active = focusedSelection();
   const right = down(2);
   h.call("keepTextSelection", right);
@@ -2324,4 +2336,34 @@ test("right mouse down does not move focus or caret while text is selected", () 
   const left = down(0);
   h.call("keepTextSelection", left);
   assert.equal(left.defaultPrevented, false);
+});
+
+test("menu search opens a search limited to the selection at the right-click spot", () => {
+  const h = setup();
+  h.state.selected = ["a", "b"];
+  h.call(
+    "openContextMenuAt",
+    rightClick(new TestElement(false, true, { nodeId: "a" }), 300, 200),
+  );
+  const menu = h.state.contextMenu!;
+  h.call("runMenuAction", "search");
+  assert.equal(h.state.searchOpen, true);
+  assert.equal(h.state.searchQuery, "");
+  assert.deepEqual(h.state.searchScope, { path: [], nodeIds: ["a", "b"] });
+  assert.deepEqual(h.state.searchAt, { left: menu.left, top: menu.top });
+});
+
+test("dismissing the search on focus loss leaves focus where the user moved it", () => {
+  const h = setup(["a"]);
+  h.call(
+    "openContextMenuAt",
+    rightClick(new TestElement(false, true, { nodeId: "a" })),
+  );
+  h.call("runMenuAction", "search");
+  const before = h.state.focusCount;
+  h.call("dismissSearch");
+  assert.equal(h.state.searchOpen, false);
+  assert.equal(h.state.searchScope, null);
+  assert.equal(h.state.searchAt, null);
+  assert.equal(h.state.focusCount, before);
 });

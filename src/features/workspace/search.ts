@@ -5,6 +5,17 @@ export const MAX_SEARCH_RESULTS = 100;
 
 export type SearchQuery = { words: string[]; tagPrefixes: string[] };
 
+/** 검색 범위: path 캔버스의 nodeIds 노드들과, 그중 캔버스 노드 안(모든 깊이). */
+export type SearchScope = { path: string[]; nodeIds: string[] };
+
+function inScope(path: readonly string[], nodeId: string, scope: SearchScope) {
+  if (path.length < scope.path.length) return false;
+  if (!scope.path.every((id, index) => path[index] === id)) return false;
+  const top =
+    path.length === scope.path.length ? nodeId : path[scope.path.length];
+  return scope.nodeIds.includes(top);
+}
+
 export type SearchResult = {
   node: WorkspaceNode;
   /** 노드를 담은 캔버스 경로(캔버스 노드 ID 목록). 루트면 빈 배열. */
@@ -65,6 +76,8 @@ export function searchWorkspace(
   root: WorkspaceDocument,
   input: string,
   currentPath: readonly string[],
+  /** 있으면 이 범위 안에서만 찾는다(우클릭 검색). */
+  scope?: SearchScope | null,
 ): {
   /** 목록에 보일 앞쪽 100개. */
   results: SearchResult[];
@@ -97,7 +110,7 @@ export function searchWorkspace(
         query.tagPrefixes.every((prefix) =>
           names.some((name) => name.startsWith(prefix)),
         );
-      if (matches)
+      if (matches && (!scope || inScope(path, node.id, scope)))
         found.push({
           node,
           path,

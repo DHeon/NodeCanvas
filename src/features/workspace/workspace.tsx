@@ -34,6 +34,7 @@ import {
   hasSearchTerms,
   searchWorkspace,
   type SearchResult,
+  type SearchScope,
 } from "./search";
 import SearchPanel from "./search-panel";
 import { roleForConnectedNode, setRole, setTodoDone } from "./roles";
@@ -508,6 +509,12 @@ export default function Workspace({
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [searchActive, setSearchActive] = useState<number | null>(null);
+  // 우클릭 검색: 그때 고른 노드들 안에서만 찾고, 우클릭한 자리에 검색창을 띄운다.
+  const [searchScope, setSearchScope] = useState<SearchScope | null>(null);
+  const [searchAt, setSearchAt] = useState<{
+    left: number;
+    top: number;
+  } | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   // 다른 캔버스의 결과로 갈 때, 공간 전환 뒤 카메라 복원이 끝난 다음 그 노드를 가운데 둔다.
   const pendingFocusRef = useRef<{ key: string; nodeId: string } | null>(null);
@@ -2024,6 +2031,9 @@ export default function Workspace({
   }
 
   function openSearch() {
+    // 도구 막대·Ctrl+F 검색은 늘 프로젝트 전체를 오른쪽 위에서 찾는다.
+    setSearchScope(null);
+    setSearchAt(null);
     setSearchOpen(true);
     // 이미 열려 있으면 입력칸으로 돌아가 검색어를 고른다. 처음 열 때는 autoFocus가 맡는다.
     searchInputRef.current?.focus();
@@ -2052,12 +2062,39 @@ export default function Workspace({
     searchInputRef.current?.focus();
   }
 
+  /**
+   * 우클릭 메뉴의 검색: 지금 고른 노드들(캔버스 노드면 그 안까지)에서만 찾는 검색창을
+   * 메뉴를 연 자리에 연다. 범위는 연 순간의 선택으로 고정한다(결과를 고르면 선택이 바뀌므로).
+   */
+  function openSearchIn(menu: { left: number; top: number }) {
+    if (!selectedNodeIds.length) return;
+    setSearchScope({
+      path: canvasPath.slice(0, activeDepth),
+      nodeIds: [...selectedNodeIds],
+    });
+    setSearchAt({ left: menu.left, top: menu.top });
+    setSearchOpen(true);
+    setSearchQuery("");
+    setDebouncedQuery("");
+    setSearchActive(null);
+    // 메뉴가 닫히며 캔버스로 돌린 포커스를 검색칸으로 다시 가져온다(이미 열려 있던 경우).
+    globalThis.setTimeout?.(() => searchInputRef.current?.focus(), 0);
+  }
+
+  /** 검색을 닫고 캔버스로 포커스를 돌린다(Esc·×). */
   function closeSearch() {
+    dismissSearch();
+    viewportRef.current?.focus({ preventScroll: true });
+  }
+
+  /** 검색을 닫기만 한다. 포커스가 다른 곳으로 옮겨 가서 닫힐 때 그 포커스를 뺏지 않는다. */
+  function dismissSearch() {
+    setSearchScope(null);
+    setSearchAt(null);
     setSearchOpen(false);
     setSearchQuery("");
     setDebouncedQuery("");
     setSearchActive(null);
-    viewportRef.current?.focus({ preventScroll: true });
   }
 
   function pickSearchResult(result: SearchResult) {
@@ -2183,15 +2220,15 @@ export default function Workspace({
   }
 
   /**
-   * 오른쪽 버튼을 누를 때, 글자를 골라 둔 칸이 있으면 브라우저가 포커스·커서를 옮기지 못하게 한다.
-   * 그래야 드래그한 선택이 남고 우클릭 메뉴가 그 글자를 대상으로 한다.
+   * 오른쪽 버튼을 누를 때 브라우저가 포커스·커서를 옮기지 못하게 한다.
+   * - 드래그한 글자 선택이 남아 우클릭 메뉴가 그 글자를 대상으로 한다.
+   * - 노드 안 글 칸·머리에 포커스가 가며 그 노드만 선택되는 일을 막아, 여러 개 고른 선택이 유지된다.
    */
   function keepTextSelection(event: {
     button: number;
     preventDefault(): void;
   }) {
-    if (event.button === 2 && selectedTextField(document.activeElement))
-      event.preventDefault();
+    if (event.button === 2) event.preventDefault();
   }
 
   /**
@@ -2318,6 +2355,8 @@ export default function Workspace({
       ...(canUngroup
         ? [{ id: "ungroup", label: "그룹화 해제", shortcut: "Shift+G" }]
         : []),
+      "separator",
+      { id: "search", label: "검색" },
     ];
   }
 
@@ -2336,6 +2375,7 @@ export default function Workspace({
     else if (id === "paste") pasteAt(menu.point);
     else if (id === "group") groupSelection();
     else if (id === "ungroup") ungroupSelection();
+    else if (id === "search") openSearchIn(menu);
   }
 
   /** 메뉴를 닫고 포커스를 돌린다: 글자 메뉴면 그 칸, 아니면 캔버스. */
@@ -2962,9 +3002,10 @@ export default function Workspace({
             rootDocument,
             debouncedQuery,
             canvasKey ? canvasKey.split("/") : [],
+            searchScope,
           )
         : null,
-    [searchOpen, debouncedQuery, rootDocument, canvasKey],
+    [searchOpen, debouncedQuery, rootDocument, canvasKey, searchScope],
   );
   const searchResults = search?.results ?? [];
   // 지금 캔버스에서 결과를 대표하는 노드. 검색 중이 아니면 null(흐림 없음).
@@ -3557,6 +3598,10 @@ export default function Workspace({
               onActiveChange={setSearchActive}
               onPick={pickSearchResult}
               onClose={closeSearch}
+              at={searchAt}
+              scopeCount={searchScope?.nodeIds.length ?? null}
+              onWiden={() => setSearchScope(null)}
+              onDismiss={dismissSearch}
             />
           )}
           {tool !== "select" && (
