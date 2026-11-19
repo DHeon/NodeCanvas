@@ -326,8 +326,8 @@ const quietButtonClassName =
   "shrink-0 rounded-lg border border-rule bg-white px-3 py-1.5 text-sm hover:bg-mist focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-moss-deep active:bg-mist-deep";
 // 캔버스 점 격자 색: 세이지 바탕(field) 위에서 보일 만큼만.
 const GRID_DOT_COLOR = "var(--color-sage-dot)";
-/** 화면에서 점 사이가 이보다 좁아지면 중간 점을 하나씩 건너뛴다(px). */
-const GRID_MIN_SPACING = 20;
+/** 화면에서 점 사이가 이보다 좁아지면 점 간격을 한 단계 넓힌다(px). */
+const GRID_MIN_SPACING = 18;
 
 export default function Workspace({
   projectId,
@@ -3106,11 +3106,10 @@ export default function Workspace({
       : undefined;
   const selectionCount =
     selectedNodeIds.length + (selectedConnectionId ? 1 : 0);
-  // 축소할 때 중간 점을 단계적으로 생략해 화면에서 점 사이가 20~40px로 유지되게 한다.
-  const gridStep =
-    24 *
-    2 **
-      Math.max(0, Math.ceil(Math.log2(GRID_MIN_SPACING / (24 * camera.zoom))));
+  // 축소할 때 점 간격을 24 → 36 → 48 → 72 → 96…으로 늘려 화면에서 점 사이가 18~27px로 유지되게 한다.
+  let gridStep = 24;
+  for (let i = 0; gridStep * camera.zoom < GRID_MIN_SPACING; i++)
+    gridStep *= i % 2 === 0 ? 1.5 : 4 / 3;
   // 점은 화면 픽셀 기준으로 그린다. 반지름이 1px 아래로 내려가거나 가장자리가 딱 끊기면
   // 칸 크기가 소수점인 줌에서 점이 픽셀 사이에 걸려 거의 안 보이므로, 최소 크기와 부드러운 가장자리를 둔다.
   const dotRadius = Math.min(2, Math.max(1.1, camera.zoom));
