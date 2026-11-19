@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import LogoutButton from "@/features/auth/logout-button";
 import CreateProjectForm from "@/features/projects/create-project-form";
+import ImportProjectButton from "@/features/projects/import-project-button";
 import RenameProjectForm from "@/features/projects/rename-project-form";
 import DeleteProjectForm from "@/features/projects/delete-project-form";
 import ProjectPreview, {
@@ -64,6 +65,10 @@ export default async function DashboardPage() {
               생각을 메모로 놓고, 선으로 이어보세요.
             </p>
             <CreateProjectForm autoFocus />
+            <div className="mt-6 flex items-center gap-3 border-t border-rule-soft pt-6 text-sm text-lichen">
+              <span className="break-keep">백업해 둔 프로젝트가 있다면</span>
+              <ImportProjectButton />
+            </div>
           </section>
         ) : (
           <>
@@ -76,7 +81,10 @@ export default async function DashboardPage() {
                   {projects.length}개 · 최근 수정 순
                 </p>
               </div>
-              <CreateProjectForm />
+              <div className="flex flex-wrap items-end gap-3">
+                <CreateProjectForm />
+                <ImportProjectButton />
+              </div>
             </div>
 
             <ul className="mt-10 grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-5">

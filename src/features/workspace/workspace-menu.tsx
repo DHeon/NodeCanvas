@@ -5,6 +5,7 @@ import {
   type ConnectionColor,
 } from "./connection-colors";
 import type { TagDefinition, WorkspaceDocument } from "./types";
+import ImportProjectButton from "@/features/projects/import-project-button";
 
 type MenuId = "file" | "edit" | "view" | "tags";
 
@@ -21,7 +22,8 @@ export default function WorkspaceMenu({
 }: {
   canvas: WorkspaceDocument["canvas"];
   onApply: (canvas: WorkspaceDocument["canvas"]) => string | null;
-  onExport: () => void;
+  /** .nono 파일로 내보낸다. 끝나면(실패 포함) 돌아온다. */
+  onExport: () => void | Promise<void>;
   onViewChange: (
     patch: Pick<WorkspaceDocument["canvas"], "lineStyle" | "grid">,
   ) => void;
@@ -117,22 +119,22 @@ export default function WorkspaceMenu({
               className="absolute top-full left-0 mt-1 min-h-12 w-72 rounded-xl border border-rule bg-white p-4 shadow-float"
             >
               {id === "file" && (
-                <div className="space-y-2">
+                <div className="space-y-1">
                   <button
                     type="button"
                     onClick={() => {
-                      onExport();
+                      void onExport();
                       setMenu(null);
                       trigger.current?.focus();
                     }}
                     className="w-full rounded-lg px-3 py-2 text-left text-bark hover:bg-mist focus-visible:outline-2 focus-visible:outline-moss-deep"
                   >
-                    JSON으로 내려받기
+                    내보내기
                   </button>
-                  <p className="px-3 text-xs leading-5 break-keep text-lichen">
-                    하위 작업 공간까지 포함한 프로젝트 전체를 파일로 백업해요.
-                    이미지는 서버에 그대로 남아요.
-                  </p>
+                  <ImportProjectButton
+                    variant="menu"
+                    onDone={() => setMenu(null)}
+                  />
                 </div>
               )}
               {id === "view" && (
