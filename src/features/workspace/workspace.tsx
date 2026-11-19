@@ -3107,7 +3107,11 @@ export default function Workspace({
   // 축소할 때 중간 점을 단계적으로 생략해 배경이 빽빽해지지 않도록 한다.
   const gridStep =
     24 * 2 ** Math.max(0, Math.ceil(Math.log2(0.5 / camera.zoom)));
-  const dotRadius = Math.max(0.8, camera.zoom);
+  // 점은 화면 픽셀 기준으로 그린다. 반지름이 1px 아래로 내려가거나 가장자리가 딱 끊기면
+  // 칸 크기가 소수점인 줌에서 점이 픽셀 사이에 걸려 거의 안 보이므로, 최소 크기와 부드러운 가장자리를 둔다.
+  const dotRadius = Math.min(2, Math.max(1.1, camera.zoom));
+  const gridImage = `radial-gradient(circle, ${GRID_DOT_COLOR} ${dotRadius}px, transparent ${dotRadius + 0.9}px)`;
+  const gridTile = `${gridStep * camera.zoom}px ${gridStep * camera.zoom}px`;
   const showGrid = workspace.canvas.grid !== false;
   const tagsById = new Map(
     (rootDocument.tags ?? []).map((tag) => [tag.id, tag]),
@@ -3486,10 +3490,8 @@ export default function Workspace({
               ? "var(--color-field)"
               : undefined,
             backgroundImage:
-              shown.canvas.infinite && showGrid
-                ? `radial-gradient(circle, ${GRID_DOT_COLOR} ${dotRadius}px, transparent ${dotRadius}px)`
-                : undefined,
-            backgroundSize: `${gridStep * camera.zoom}px ${gridStep * camera.zoom}px`,
+              shown.canvas.infinite && showGrid ? gridImage : undefined,
+            backgroundSize: gridTile,
             backgroundPosition: `${camera.x}px ${camera.y}px`,
             cursor: isPanning
               ? "grabbing"
@@ -3528,17 +3530,26 @@ export default function Workspace({
             if (event.button === 1) event.preventDefault();
           }}
         >
+          {/* 유한 캔버스 바탕: 점이 흐려지지 않게 확대·축소 변환 밖에서 화면 픽셀로 그린다. */}
+          {!shown.canvas.infinite && (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute top-0 left-0 bg-field shadow-card"
+              style={{
+                width: shown.canvas.width * camera.zoom,
+                height: shown.canvas.height * camera.zoom,
+                backgroundImage: showGrid ? gridImage : undefined,
+                backgroundSize: gridTile,
+                transform: `translate(${camera.x}px, ${camera.y}px)`,
+              }}
+            />
+          )}
           {/* 캔버스 */}
           <div
-            className={`absolute top-0 left-0 origin-top-left ${shown.canvas.infinite ? "" : "bg-field shadow-card"}`}
+            className="absolute top-0 left-0 origin-top-left"
             style={{
               width: shown.canvas.infinite ? 0 : shown.canvas.width,
               height: shown.canvas.infinite ? 0 : shown.canvas.height,
-              backgroundImage:
-                shown.canvas.infinite || !showGrid
-                  ? undefined
-                  : `radial-gradient(circle, ${GRID_DOT_COLOR} ${dotRadius / camera.zoom}px, transparent ${dotRadius / camera.zoom}px)`,
-              backgroundSize: `${gridStep}px ${gridStep}px`,
               transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.zoom})`,
             }}
           >
