@@ -111,6 +111,31 @@ export function makeClip(
   };
 }
 
+/** 텍스트 노드 본문 글자 수 한도(스키마와 같음). */
+const MAX_TEXT_LENGTH = 50000;
+
+/** 붙여넣은 일반 글을 텍스트 노드 하나짜리 묶음으로 만든다(새 노드 기본 크기 320x220). */
+export function textClip(text: string): NodeClip {
+  const body = text.slice(0, MAX_TEXT_LENGTH);
+  return {
+    nodes: [
+      {
+        id: uuidv4(),
+        type: "text_node",
+        position: { x: 0, y: 0 },
+        width: 320,
+        height: 220,
+        title: "",
+        text: body,
+      },
+    ],
+    connections: [],
+    groups: [],
+    text: body,
+    systemSynced: true,
+  };
+}
+
 /** 노드들이 만드는 캔버스 깊이(캔버스 노드 1단계 = 1). */
 function canvasNesting(nodes: readonly WorkspaceNode[]): number {
   let deepest = 0;
