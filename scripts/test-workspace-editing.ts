@@ -232,6 +232,7 @@ const names = [
   "handleCopy",
   "handleCut",
   "handlePaste",
+  "clipboardBlocked",
 ];
 const functions = new Map<string, string>();
 let clearGesture = "";
@@ -274,6 +275,7 @@ class TestElement {
     if (selector === "[data-connection-side]") {
       return this.dataset.connectionSide ? this : null;
     }
+    if (selector === "dialog[open]") return null;
     if (selector === "[data-group-id]") {
       return this.dataset.groupId ? this : null;
     }
@@ -325,6 +327,7 @@ type TestState = {
   pendingFocus?: { key: string; nodeId: string } | null;
   clip?: clipOps.NodeClip | null;
   lastPointer?: { clientX: number; clientY: number } | null;
+  viewer?: string | null;
 };
 type Handlers = Record<string, (...args: unknown[]) => unknown>;
 const factory = new Function(
@@ -354,6 +357,7 @@ const factory = new Function(
   const { copiesNodes, hasSelectedText } = keyTargets;
   const runTextAction = () => { state.calls.push("text-action"); };
   const hasClip = !!state.clip;
+  const viewerNodeId = state.viewer ?? null;
   const contextMenu = state.contextMenu ?? null;
   const setHasClip = () => {};
   const clipboardRef = {
@@ -2164,4 +2168,21 @@ test("menu cut removes the selection in one undo step", () => {
   assert.equal(h.state.history.present.nodes.length, 2);
   assert.equal(h.state.history.past.length, 1);
   assert.equal(h.state.clip!.nodes[0].id, "a");
+});
+
+test("clipboard keys do nothing behind the open image viewer", () => {
+  const h = setup(["a"]);
+  h.call("handleCopy", clipEvent(new TestElement()));
+  h.state.viewer = "a";
+  const cut = clipEvent(new TestElement());
+  h.call("handleCut", cut);
+  assert.equal(h.state.history.present.nodes.length, 3);
+  assert.equal(cut.defaultPrevented, false);
+  const paste = clipEvent(new TestElement(), clipboardData("A\n본문"));
+  h.call("handlePaste", paste);
+  assert.equal(h.state.history.present.nodes.length, 3);
+  assert.equal(paste.defaultPrevented, false);
+  h.state.clip = null;
+  h.call("handleCopy", clipEvent(new TestElement()));
+  assert.equal(h.state.clip ?? null, null);
 });

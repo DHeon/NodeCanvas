@@ -305,3 +305,32 @@ test("pasteClip into a sub canvas", () => {
   );
   valid(result.document);
 });
+
+test("pasteClip refuses a clip larger than a finite canvas", () => {
+  const wide = docWith([textNode(0, 0), textNode(3000, 0)], undefined, {
+    canvas: { width: 4000, height: 1200, infinite: true },
+  });
+  const finite = docWith([]);
+  assert.deepEqual(
+    pasteClip(
+      finite,
+      [],
+      makeClip(
+        wide,
+        wide.nodes.map((node) => node.id),
+      )!,
+      {
+        x: 500,
+        y: 500,
+      },
+    ),
+    { error: "size" },
+  );
+  const big = docWith([textNode(0, 0, { width: 2500 })], undefined, {
+    canvas: { width: 4000, height: 1200, infinite: true },
+  });
+  assert.deepEqual(
+    pasteClip(finite, [], makeClip(big, [big.nodes[0].id])!, { x: 0, y: 0 }),
+    { error: "size" },
+  );
+});

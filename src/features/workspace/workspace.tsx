@@ -2461,7 +2461,7 @@ export default function Workspace({
 
   function handlePaste(event: ClipboardInput) {
     const data = event.clipboardData;
-    if (!data) return;
+    if (!data || clipboardBlocked(event.target)) return;
     if (
       gestureRef.current ||
       (event.target instanceof Element &&
@@ -2520,6 +2520,15 @@ export default function Workspace({
     };
   }, []);
 
+  /**
+   * 이미지 보기 같은 모달이 열려 있으면 복사·잘라내기·붙여넣기가 뒤의 캔버스를 바꾸지 않게 한다.
+   * 문서에서 듣는 이벤트라 모달의 stopPropagation으로는 막히지 않는다.
+   */
+  function clipboardBlocked(target: EventTarget | null): boolean {
+    if (viewerNodeId) return true;
+    return target instanceof Element && !!target.closest("dialog[open]");
+  }
+
   /** 선택한 노드를 앱 클립보드에 담는다. 담은 묶음(없으면 null). */
   function copySelection(): NodeClip | null {
     if (gestureRef.current || !selectedNodeIds.length) return null;
@@ -2569,7 +2578,7 @@ export default function Workspace({
   /** Ctrl+C: 캔버스(또는 고른 글자가 없는 노드 안 글 칸)에서는 노드를 복사한다. */
   function handleCopy(event: ClipboardInput) {
     const target = event.target instanceof Element ? event.target : null;
-    if (!copiesNodes(target)) return;
+    if (clipboardBlocked(target) || !copiesNodes(target)) return;
     const clip = copySelection();
     if (!clip) return;
     event.clipboardData?.setData("text/plain", clip.text);
@@ -2579,7 +2588,7 @@ export default function Workspace({
   /** Ctrl+X: 복사와 같은 규칙으로 노드를 잘라낸다. */
   function handleCut(event: ClipboardInput) {
     const target = event.target instanceof Element ? event.target : null;
-    if (!copiesNodes(target)) return;
+    if (clipboardBlocked(target) || !copiesNodes(target)) return;
     const clip = copySelection();
     if (!clip) return;
     event.clipboardData?.setData("text/plain", clip.text);

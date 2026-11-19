@@ -35,7 +35,7 @@ export type NodeClip = {
   systemSynced: boolean;
 };
 
-export type PasteError = "nodes" | "drawing" | "groups" | "depth";
+export type PasteError = "nodes" | "drawing" | "groups" | "depth" | "size";
 
 /** 붙여넣기를 거절했을 때 알림 문구. */
 export const PASTE_ERROR_NOTICES: Record<PasteError, string> = {
@@ -43,6 +43,7 @@ export const PASTE_ERROR_NOTICES: Record<PasteError, string> = {
   drawing: DRAWING_LIMIT_NOTICE,
   groups: `그룹은 공간마다 ${MAX_GROUPS_PER_CANVAS}개까지 만들 수 있어요.`,
   depth: `작업 공간은 ${MAX_CANVAS_DEPTH}단계까지 넣을 수 있어요.`,
+  size: "붙여넣을 노드들이 이 캔버스보다 커요. 캔버스 크기를 늘린 뒤 붙여넣어 주세요.",
 };
 
 /** 멤버가 1개 이상이고 멤버 전부가 선택된 그룹들(문서의 그룹 순서). */
@@ -159,6 +160,12 @@ export function pasteClip(
   const bottom = Math.max(
     ...clip.nodes.map((node) => node.position.y + node.height),
   );
+  // 유한 캔버스보다 큰 묶음은 어디에 놓아도 영역을 벗어나 저장이 거절되므로 붙이지 않는다.
+  if (
+    !target.canvas.infinite &&
+    (right - left > target.canvas.width || bottom - top > target.canvas.height)
+  )
+    return { error: "size" };
   let dx = point.x - (left + right) / 2;
   let dy = point.y - (top + bottom) / 2;
   if (!target.canvas.infinite) {
