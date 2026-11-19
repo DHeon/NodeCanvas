@@ -11,6 +11,8 @@ import {
   flattenDocument,
   isEmptyPatch,
   pathChanges,
+  buildTimelapseFrames,
+  frameDuration,
 } from "../src/features/workspace/timelapse";
 import type {
   CanvasNode,
@@ -201,5 +203,70 @@ test("stroke order survives a store that sorts object keys (Postgres JSONB)", ()
   assert.deepEqual(
     rebuilt.drawing!.strokes.map((s) => s.id),
     doc.drawing.strokes.map((s) => s.id),
+  );
+});
+
+test("frames replay baseline as estimated steps, then history, then unsaved edits", () => {
+  const { root, a, sub } = fixture();
+  const saved = structuredClone(root);
+  const added = text("새것", 600, 0);
+  saved.nodes.push(added);
+  const current = structuredClone(saved);
+  current.nodes.find((node) => node.id === a.id)!.title = "고침";
+  const rows = [
+    { baseline: true, patch: diffEntries(new Map(), flattenDocument(root)) },
+    {
+      baseline: false,
+      patch: diffEntries(flattenDocument(root), flattenDocument(saved)),
+    },
+  ];
+  const { frames, estimatedCount } = buildTimelapseFrames(rows, current, []);
+
+  assert.equal(frames[0].document.nodes.length, 0);
+  assert.ok(estimatedCount >= 3);
+  assert.ok(frames.slice(1, estimatedCount).every((frame) => frame.estimated));
+  const recorded = frames[estimatedCount];
+  assert.equal(recorded.estimated, false);
+  assert.deepEqual(recorded.entered, [added.id]);
+  const last = frames.at(-1)!;
+  assert.deepEqual(last.changed, [a.id]);
+  assert.deepEqual(
+    last.document.nodes.map((node) => node.id),
+    current.nodes.map((node) => node.id),
+  );
+  // 하위 캔버스로 재생하면 그 안의 노드만 보인다.
+  const inner = buildTimelapseFrames(rows, current, [sub.id]);
+  assert.deepEqual(
+    inner.frames.at(-1)!.document.nodes.map((node) => node.title),
+    ["C"],
+  );
+});
+
+test("frames skip steps that only touch another canvas", () => {
+  const { root, sub } = fixture();
+  const next = structuredClone(root);
+  (
+    next.nodes.find((node) => node.id === sub.id) as CanvasNode
+  ).document.nodes[0].title = "안쪽만";
+  const rows = [
+    { baseline: false, patch: diffEntries(new Map(), flattenDocument(root)) },
+    {
+      baseline: false,
+      patch: diffEntries(flattenDocument(root), flattenDocument(next)),
+    },
+  ];
+  const { frames, estimatedCount } = buildTimelapseFrames(rows, next, []);
+  assert.equal(estimatedCount, 0);
+  assert.equal(frames.length, 2); // 빈 화면 + 첫 기록
+  assert.equal(buildTimelapseFrames(rows, next, [sub.id]).frames.length, 3);
+});
+
+test("frame duration grows with new strokes", () => {
+  const plain = { strokes: [] as string[] };
+  const busy = { strokes: Array.from({ length: 10 }, () => "s") };
+  assert.equal(frameDuration(plain), 700);
+  assert.ok(frameDuration(busy) > 700);
+  assert.ok(
+    frameDuration({ strokes: Array.from({ length: 500 }, () => "s") }) <= 2000,
   );
 });

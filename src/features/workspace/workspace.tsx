@@ -107,6 +107,8 @@ import useImageUploads from "./use-image-uploads";
 import { fitNodeSize, replaceNodeImage, transformNode } from "./node-transform";
 import WorkspaceToolbar, { type WorkspaceTool } from "./workspace-toolbar";
 import DrawingLayer from "./drawing-layer";
+import { buildTimelapseFrames, type Patch } from "./timelapse";
+import TimelapsePlayer, { type TimelapseState } from "./timelapse-player";
 import DrawOptions from "./draw-options";
 import {
   readPenSettings,
@@ -446,6 +448,17 @@ export default function Workspace({
   }, []);
   // 크게 보기 중인 이미지 노드. 다른 공간으로 가거나 노드가 사라지면 자동으로 닫힌다.
   const [viewerNodeId, setViewerNodeId] = useState<string | null>(null);
+  // 타임랩스: 연 캔버스(key)의 장면을 캔버스에 대신 그리고 편집은 막는다. 다른 캔버스로 가면 꺼진다.
+  const [timelapse, setTimelapse] = useState<{
+    key: string;
+    state: TimelapseState;
+  } | null>(null);
+  const [timelapseIndex, setTimelapseIndex] = useState(0);
+  const playback = timelapse?.key === canvasKey ? timelapse.state : null;
+  const shown =
+    (playback?.status === "ready" &&
+      playback.frames[timelapseIndex]?.document) ||
+    workspace;
   const savingRef = useRef(false);
   const documentVersionRef = useRef(initialVersion);
   const unconfirmedSaveRef = useRef<{
@@ -2104,6 +2117,54 @@ export default function Workspace({
     globalThis.setTimeout?.(() => searchInputRef.current?.focus(), 0);
   }
 
+  /** 지금 열린 캔버스의 타임랩스를 연다. 기록을 받아 장면을 만들고 처음부터 재생한다. */
+  async function openTimelapse() {
+    if (gestureRef.current || playback) return;
+    dismissSearch();
+    setContextMenu(null);
+    setConnectMenu(null);
+    setViewerNodeId(null);
+    if (tool !== "select") changeTool("select");
+    setSelectedNodeIds([]);
+    setSelectedConnectionId(null);
+    setTimelapseIndex(0);
+    const key = canvasKey;
+    setTimelapse({ key, state: { status: "loading" } });
+    try {
+      const response = await fetch(`/api/projects/${projectId}/history`, {
+        cache: "no-store",
+      });
+      if (!response.ok) throw new Error(String(response.status));
+      const body = (await response.json()) as {
+        history: { baseline: boolean; patch: Patch }[];
+      };
+      const built = buildTimelapseFrames(
+        body.history,
+        rootDocumentRef.current,
+        canvasPath.slice(0, activeDepth),
+      );
+      // 다 만들어진 모습이 화면에 들어오게 맞춘다.
+      const box = viewportRef.current?.getBoundingClientRect();
+      if (box && box.width > 0 && box.height > 0)
+        setCamera(
+          getFitCamera(built.frames.at(-1)!.document, box.width, box.height),
+        );
+      setTimelapse((current) =>
+        current?.key === key
+          ? { key, state: { status: "ready", ...built } }
+          : current,
+      );
+    } catch {
+      setTimelapse((current) => (current?.key === key ? null : current));
+      setNotice("타임랩스를 불러오지 못했어요. 잠시 뒤 다시 시도해주세요.");
+    }
+  }
+
+  function closeTimelapse() {
+    setTimelapse(null);
+    viewportRef.current?.focus({ preventScroll: true });
+  }
+
   /** 검색을 닫고 캔버스로 포커스를 돌린다(Esc·×). */
   function closeSearch() {
     dismissSearch();
@@ -3117,7 +3178,10 @@ export default function Workspace({
             void imageUploads.upload(target.nodeId, file, target.path);
         }}
       />
-      <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-3 border-b border-rule bg-white px-4 py-2">
+      <header
+        inert={!!playback}
+        className="flex min-h-14 shrink-0 flex-wrap items-center gap-3 border-b border-rule bg-white px-4 py-2"
+      >
         <Link
           href="/dashboard"
           onNavigate={(event) => {
@@ -3354,25 +3418,29 @@ export default function Workspace({
           </ol>
         </nav>
       )}
-      <WorkspaceMenu
-        key={canvasKey}
-        canvas={workspace.canvas}
-        onExport={exportArchive}
-        onViewChange={changeView}
-        tags={rootDocument.tags ?? []}
-        tagUsage={countTagUsage(rootDocument)}
-        onTagRename={renameTagById}
-        onTagRecolor={recolorTagById}
-        onTagDelete={deleteTagById}
-        onApply={(canvas) => {
-          if (gestureRef.current) return "드래그를 마친 뒤 다시 시도해주세요.";
-          const result = applyCanvasSettings(workspace, canvas);
-          if (result.error) return result.error;
-          dispatchHistory({ type: "commit" });
-          setWorkspace(() => result.document!);
-          return null;
-        }}
-      />
+      <div className="contents" inert={!!playback}>
+        <WorkspaceMenu
+          key={canvasKey}
+          canvas={workspace.canvas}
+          onExport={exportArchive}
+          onTimelapse={() => void openTimelapse()}
+          onViewChange={changeView}
+          tags={rootDocument.tags ?? []}
+          tagUsage={countTagUsage(rootDocument)}
+          onTagRename={renameTagById}
+          onTagRecolor={recolorTagById}
+          onTagDelete={deleteTagById}
+          onApply={(canvas) => {
+            if (gestureRef.current)
+              return "드래그를 마친 뒤 다시 시도해주세요.";
+            const result = applyCanvasSettings(workspace, canvas);
+            if (result.error) return result.error;
+            dispatchHistory({ type: "commit" });
+            setWorkspace(() => result.document!);
+            return null;
+          }}
+        />
+      </div>
       {/* 뷰포트  */}
       <div
         className="relative flex min-h-0 flex-1"
@@ -3386,37 +3454,39 @@ export default function Workspace({
           event.preventDefault();
         }}
       >
-        <WorkspaceToolbar
-          onAddTextNode={addTextNode}
-          onAddImageNode={() => addNode("image_node")}
-          onAddCanvasNode={() => addNode("canvas_node")}
-          onAddLinkNode={() => addNode("link_node")}
-          onAddChecklistNode={() => addNode("checklist_node")}
-          canvasDepthLimit={activeDepth >= MAX_CANVAS_DEPTH}
-          tool={tool}
-          onToolChange={changeTool}
-        />
-        {tool === "pen" && (
-          <DrawOptions
-            color={pen.color}
-            width={pen.width}
-            onColor={(color) => changePen({ color })}
-            onWidth={(width) => changePen({ width })}
-            onReturnToCanvas={() =>
-              viewportRef.current?.focus({ preventScroll: true })
-            }
+        <div className="contents" inert={!!playback}>
+          <WorkspaceToolbar
+            onAddTextNode={addTextNode}
+            onAddImageNode={() => addNode("image_node")}
+            onAddCanvasNode={() => addNode("canvas_node")}
+            onAddLinkNode={() => addNode("link_node")}
+            onAddChecklistNode={() => addNode("checklist_node")}
+            canvasDepthLimit={activeDepth >= MAX_CANVAS_DEPTH}
+            tool={tool}
+            onToolChange={changeTool}
           />
-        )}
+          {tool === "pen" && (
+            <DrawOptions
+              color={pen.color}
+              width={pen.width}
+              onColor={(color) => changePen({ color })}
+              onWidth={(width) => changePen({ width })}
+              onReturnToCanvas={() =>
+                viewportRef.current?.focus({ preventScroll: true })
+              }
+            />
+          )}
+        </div>
         <div
           ref={viewportRef}
           tabIndex={-1}
           className="relative min-h-0 flex-1 overflow-clip outline-none"
           style={{
-            backgroundColor: workspace.canvas.infinite
+            backgroundColor: shown.canvas.infinite
               ? "var(--color-field)"
               : undefined,
             backgroundImage:
-              workspace.canvas.infinite && showGrid
+              shown.canvas.infinite && showGrid
                 ? `radial-gradient(circle, ${GRID_DOT_COLOR} ${dotRadius}px, transparent ${dotRadius}px)`
                 : undefined,
             backgroundSize: `${gridStep * camera.zoom}px ${gridStep * camera.zoom}px`,
@@ -3460,12 +3530,12 @@ export default function Workspace({
         >
           {/* 캔버스 */}
           <div
-            className={`absolute top-0 left-0 origin-top-left ${workspace.canvas.infinite ? "" : "bg-field shadow-card"}`}
+            className={`absolute top-0 left-0 origin-top-left ${shown.canvas.infinite ? "" : "bg-field shadow-card"}`}
             style={{
-              width: workspace.canvas.infinite ? 0 : workspace.canvas.width,
-              height: workspace.canvas.infinite ? 0 : workspace.canvas.height,
+              width: shown.canvas.infinite ? 0 : shown.canvas.width,
+              height: shown.canvas.infinite ? 0 : shown.canvas.height,
               backgroundImage:
-                workspace.canvas.infinite || !showGrid
+                shown.canvas.infinite || !showGrid
                   ? undefined
                   : `radial-gradient(circle, ${GRID_DOT_COLOR} ${dotRadius / camera.zoom}px, transparent ${dotRadius / camera.zoom}px)`,
               backgroundSize: `${gridStep}px ${gridStep}px`,
@@ -3473,18 +3543,18 @@ export default function Workspace({
             }}
           >
             <DrawingLayer
-              strokes={workspace.drawing?.strokes ?? []}
+              strokes={shown.drawing?.strokes ?? []}
               draft={drawDraft}
             />
             <GroupLayer
-              document={workspace}
+              document={shown}
               joinTargetId={joinTargetId}
               selectedGroupIds={wholeGroups}
-              interactive={tool === "select"}
+              interactive={tool === "select" && !playback}
               onTabPointerDown={startGroupDrag}
               onSelectMembers={(groupId) => {
                 setSelectedNodeIds(
-                  workspace.nodes
+                  shown.nodes
                     .filter((item) => item.groupId === groupId)
                     .map((item) => item.id),
                 );
@@ -3497,9 +3567,9 @@ export default function Workspace({
               }
             />
             <ConnectionLayer
-              canvas={workspace.canvas}
-              nodes={workspace.nodes}
-              connections={workspace.connections}
+              canvas={shown.canvas}
+              nodes={shown.nodes}
+              connections={shown.connections}
               draft={connectionDraft}
               selectedConnectionId={selectedConnectionId}
               zoom={camera.zoom}
@@ -3507,7 +3577,7 @@ export default function Workspace({
               dimmedNodeIds={dimmedNodeIds}
             />
 
-            {workspace.nodes.map((node) => {
+            {shown.nodes.map((node) => {
               const frame = {
                 selected: selectedNodeIds.includes(node.id),
                 showSelection:
@@ -3567,7 +3637,7 @@ export default function Workspace({
                   key={node.id}
                   {...frame}
                   node={node}
-                  view={buildChecklist(workspace, node.id)}
+                  view={buildChecklist(shown, node.id)}
                   onToggleNode={toggleTodoNode}
                   onAddItem={(text) => addChecklistItemTo(node.id, text)}
                   onEditItem={(itemId, patch) =>
@@ -3606,17 +3676,19 @@ export default function Workspace({
               />
             )}
           </div>
-          <button
-            type="button"
-            onClick={fitCanvas}
-            aria-label="화면 맞춤"
-            title="화면 맞춤 (0)"
-            aria-keyshortcuts="0"
-            onPointerDown={(event) => event.stopPropagation()}
-            className="absolute bottom-4 left-4 z-40 grid h-10 w-10 place-items-center rounded-xl border border-rule bg-white/95 text-bark-soft shadow-card backdrop-blur hover:bg-mist focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-moss-deep active:bg-mist-deep"
-          >
-            <FitIcon size={20} />
-          </button>
+          {!playback && (
+            <button
+              type="button"
+              onClick={fitCanvas}
+              aria-label="화면 맞춤"
+              title="화면 맞춤 (0)"
+              aria-keyshortcuts="0"
+              onPointerDown={(event) => event.stopPropagation()}
+              className="absolute bottom-4 left-4 z-40 grid h-10 w-10 place-items-center rounded-xl border border-rule bg-white/95 text-bark-soft shadow-card backdrop-blur hover:bg-mist focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-moss-deep active:bg-mist-deep"
+            >
+              <FitIcon size={20} />
+            </button>
+          )}
           {contextMenu && (
             <NodeContextMenu
               left={contextMenu.left}
@@ -3664,6 +3736,27 @@ export default function Workspace({
             // 그리기 중에는 노드 위를 덮어 노드 선택·드래그 대신 그림 입력만 받는다.
             <div aria-hidden="true" className="absolute inset-0 z-30" />
           )}
+          {playback && (
+            <>
+              {/* 재생 중에는 캔버스 입력을 받지 않는다(가운데 버튼·Space 끌기로 둘러보기는 된다). */}
+              <div
+                aria-hidden="true"
+                className="absolute inset-0 z-30"
+                onPointerDown={(event) => event.stopPropagation()}
+                onDoubleClick={(event) => event.stopPropagation()}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                }}
+              />
+              <TimelapsePlayer
+                state={playback}
+                index={timelapseIndex}
+                onIndex={setTimelapseIndex}
+                onClose={closeTimelapse}
+              />
+            </>
+          )}
           {tool === "eraser" && eraserPointer && (
             <div
               aria-hidden="true"
@@ -3695,52 +3788,54 @@ export default function Workspace({
             onClose={() => setViewerNodeId(null)}
           />
         )}
-        <WorkspaceProperties
-          infinite={!!workspace.canvas.infinite}
-          open={propertiesOpen}
-          node={selectedNode}
-          selectionCount={selectedNodeIds.length}
-          uploading={
-            selectedNode
-              ? (imageUploads.states[selectedNode.id]?.uploading ?? false)
-              : false
-          }
-          onToggle={() => setPropertiesOpen((open) => !open)}
-          onChange={updateTextNode}
-          onTransform={updateNodeTransform}
-          onEditStart={beginTextEdit}
-          onEditEnd={endTextEdit}
-          onChooseImage={chooseImage}
-          onOpenImage={openImageViewer}
-          onRemoveImage={removeNodeImage}
-          onTextStyle={updateTextStyle}
-          onSetLinkUrl={setLinkUrl}
-          linkLoading={
-            selectedNode?.type === "link_node"
-              ? (linkPreviews.states[selectedNode.id]?.loading ?? false)
-              : false
-          }
-          onDelete={deleteSelection}
-          canvasNodes={workspace.nodes}
-          selectedConnection={selectedConnection}
-          onConnectionColor={setConnectionColor}
-          tags={rootDocument.tags ?? []}
-          selectedNodes={workspace.nodes.filter((item) =>
-            selectedNodeIds.includes(item.id),
-          )}
-          onTagAdd={addTagToNodes}
-          onTagRemove={removeTagFromNodes}
-          onTagRecolor={recolorTagById}
-          onRoleChange={(nodeIds, role) =>
-            applyDocumentChange((root, path) =>
-              setRole(root, path, nodeIds, role),
-            )
-          }
-          onTodoDone={toggleTodoNode}
-          onReturnToCanvas={() =>
-            viewportRef.current?.focus({ preventScroll: true })
-          }
-        />
+        <div className="contents" inert={!!playback}>
+          <WorkspaceProperties
+            infinite={!!workspace.canvas.infinite}
+            open={propertiesOpen}
+            node={selectedNode}
+            selectionCount={selectedNodeIds.length}
+            uploading={
+              selectedNode
+                ? (imageUploads.states[selectedNode.id]?.uploading ?? false)
+                : false
+            }
+            onToggle={() => setPropertiesOpen((open) => !open)}
+            onChange={updateTextNode}
+            onTransform={updateNodeTransform}
+            onEditStart={beginTextEdit}
+            onEditEnd={endTextEdit}
+            onChooseImage={chooseImage}
+            onOpenImage={openImageViewer}
+            onRemoveImage={removeNodeImage}
+            onTextStyle={updateTextStyle}
+            onSetLinkUrl={setLinkUrl}
+            linkLoading={
+              selectedNode?.type === "link_node"
+                ? (linkPreviews.states[selectedNode.id]?.loading ?? false)
+                : false
+            }
+            onDelete={deleteSelection}
+            canvasNodes={workspace.nodes}
+            selectedConnection={selectedConnection}
+            onConnectionColor={setConnectionColor}
+            tags={rootDocument.tags ?? []}
+            selectedNodes={workspace.nodes.filter((item) =>
+              selectedNodeIds.includes(item.id),
+            )}
+            onTagAdd={addTagToNodes}
+            onTagRemove={removeTagFromNodes}
+            onTagRecolor={recolorTagById}
+            onRoleChange={(nodeIds, role) =>
+              applyDocumentChange((root, path) =>
+                setRole(root, path, nodeIds, role),
+              )
+            }
+            onTodoDone={toggleTodoNode}
+            onReturnToCanvas={() =>
+              viewportRef.current?.focus({ preventScroll: true })
+            }
+          />
+        </div>
       </div>
     </main>
   );

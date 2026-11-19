@@ -1,4 +1,5 @@
 import type { WorkspaceDocument, WorkspaceNode } from "./types";
+import { resolveWorkspacePath } from "./workspace-tree";
 
 /**
  * 타임랩스 기록: 문서를 "항목"(키 → 값)으로 펼쳐 저장마다 바뀐 항목만 남긴다.
@@ -319,4 +320,86 @@ export function pathChanges(
   for (const [key] of patch.set) consider(key, false);
   for (const key of patch.del) consider(key, true);
   return { entered, changed, strokes, touched };
+}
+
+/** 재생할 한 장면: 그 시점의 캔버스와 이번에 새로 나온·바뀐 것. */
+export type TimelapseFrame = {
+  document: WorkspaceDocument;
+  entered: string[];
+  changed: string[];
+  strokes: string[];
+  /** 기록 전 내용을 순서 추정(B)으로 펼친 장면. */
+  estimated: boolean;
+};
+
+/**
+ * 기록(오래된 순)과 지금 문서로 한 캔버스의 장면 목록을 만든다.
+ * 기준 기록은 B로 쪼개고, 끝에 아직 저장 안 된 편집(지금 문서와의 차이)을 붙인다.
+ * 그 캔버스를 건드리지 않는 단계는 건너뛴다. 맨 앞은 빈 화면이다.
+ * estimatedCount: 앞에서부터 추정 장면 수(기준 기록이 없으면 0).
+ */
+export function buildTimelapseFrames(
+  rows: readonly { baseline: boolean; patch: Patch }[],
+  current: WorkspaceDocument,
+  path: readonly string[],
+): { frames: TimelapseFrame[]; estimatedCount: number } {
+  const key = path.join("/");
+  const fallbackCanvas = resolveWorkspacePath(current, path).document.canvas;
+  const canvasAt = (entries: Entries): WorkspaceDocument => {
+    const root = buildDocument(entries);
+    const { document, trail } = resolveWorkspacePath(root, path);
+    return trail.length === path.length
+      ? document
+      : { canvas: fallbackCanvas, nodes: [], connections: [] };
+  };
+  const steps: { patch: Patch; estimated: boolean }[] = [];
+  const replayed: Entries = new Map();
+  for (const row of rows) {
+    if (row.baseline) {
+      const base: Entries = new Map(replayed);
+      applyPatch(base, row.patch);
+      for (const patch of estimatedSteps(diffAsEntries(replayed, base)))
+        steps.push({ patch, estimated: true });
+    } else steps.push({ patch: row.patch, estimated: false });
+    applyPatch(replayed, row.patch);
+  }
+  const unsaved = diffEntries(replayed, flattenDocument(current));
+  if (!isEmptyPatch(unsaved)) steps.push({ patch: unsaved, estimated: false });
+
+  const startsEstimated = steps[0]?.estimated ?? false;
+  const entries: Entries = new Map();
+  const frames: TimelapseFrame[] = [
+    {
+      document: canvasAt(entries),
+      entered: [],
+      changed: [],
+      strokes: [],
+      estimated: startsEstimated,
+    },
+  ];
+  for (const step of steps) {
+    const changes = pathChanges(entries, step.patch, key);
+    applyPatch(entries, step.patch);
+    if (!changes.touched) continue;
+    frames.push({
+      document: canvasAt(entries),
+      entered: changes.entered,
+      changed: changes.changed,
+      strokes: changes.strokes,
+      estimated: step.estimated,
+    });
+  }
+  let estimatedCount = 0;
+  while (frames[estimatedCount]?.estimated) estimatedCount++;
+  return { frames, estimatedCount };
+}
+
+/** 기준 기록 앞에 이미 재생된 항목이 있으면(묶인 기록) 그 위에 더해진 것만 추정 순서로 펼친다. */
+function diffAsEntries(before: Entries, after: Entries): Entries {
+  return new Map(diffEntries(before, after).set);
+}
+
+/** 장면 하나를 보여 주는 시간(ms, 1×). 새 획이 많으면 조금 더 길다. */
+export function frameDuration(frame: { strokes: readonly string[] }) {
+  return 700 + Math.min(frame.strokes.length, 26) * 50;
 }

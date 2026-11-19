@@ -220,3 +220,19 @@ export function EraserIcon(props: IconProps) {
     </Icon>
   );
 }
+
+export function PauseIcon(props: IconProps) {
+  return (
+    <svg
+      width={props.size ?? 16}
+      height={props.size ?? 16}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+      className={props.className}
+    >
+      <rect x="6.5" y="5" width="4" height="14" rx="1.2" />
+      <rect x="13.5" y="5" width="4" height="14" rx="1.2" />
+    </svg>
+  );
+}

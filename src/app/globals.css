@@ -103,3 +103,32 @@ body {
     var(--font-geist-sans), "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
   word-break: keep-all;
 }
+
+/* 타임랩스: 새 노드는 커지며 나타나고, 바뀐 노드는 빛나고, 새 획은 그어진다(규칙은 재생 막대가 장면마다 만든다). */
+@keyframes timelapse-enter {
+  from {
+    opacity: 0;
+    scale: 0.82;
+  }
+}
+@keyframes timelapse-pulse-0 {
+  0% {
+    box-shadow: 0 0 0 0 #b6c794ee;
+  }
+  100% {
+    box-shadow: 0 0 0 16px #b6c79400;
+  }
+}
+@keyframes timelapse-pulse-1 {
+  0% {
+    box-shadow: 0 0 0 0 #b6c794ee;
+  }
+  100% {
+    box-shadow: 0 0 0 16px #b6c79400;
+  }
+}
+@keyframes timelapse-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
