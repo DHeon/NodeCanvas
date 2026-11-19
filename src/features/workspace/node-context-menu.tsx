@@ -23,6 +23,11 @@ type NodeContextMenuProps = {
   /** 항목을 눌렀을 때(닫기 전에 부른다). */
   onSelect: (id: string) => void;
   onClose: () => void;
+  /**
+   * true면 열 때 포커스를 가져오지 않는다(글자 메뉴). 글 칸이 포커스를 잃으면
+   * 브라우저가 드래그한 선택 표시를 지우기 때문. 화살표 키를 누르면 그때 메뉴로 옮긴다.
+   */
+  keepFocus?: boolean;
 };
 
 const EDGE_GAP = 8;
@@ -36,6 +41,7 @@ export default function NodeContextMenu({
   items,
   onSelect,
   onClose,
+  keepFocus = false,
 }: NodeContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -48,10 +54,35 @@ export default function NodeContextMenu({
     const maxTop = parent.clientHeight - menu.offsetHeight - EDGE_GAP;
     menu.style.left = `${Math.max(EDGE_GAP, Math.min(left, maxLeft))}px`;
     menu.style.top = `${Math.max(EDGE_GAP, Math.min(top, maxTop))}px`;
+    if (keepFocus) return;
     (menu.querySelector<HTMLButtonElement>(ENABLED_ITEM) ?? menu).focus({
       preventScroll: true,
     });
-  }, [left, top]);
+  }, [left, top, keepFocus]);
+
+  // 포커스를 글 칸에 둔 채 열렸을 때: 화살표는 메뉴로 포커스를 옮기고, Esc는 닫고,
+  // 다른 키(글자 입력 등)는 메뉴를 닫고 글 칸으로 그대로 보낸다.
+  useEffect(() => {
+    if (!keepFocus) return;
+    function onKey(event: KeyboardEvent) {
+      const menu = menuRef.current;
+      if (!menu || menu.contains(document.activeElement)) return;
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        event.stopPropagation();
+        const buttons = menu.querySelectorAll<HTMLButtonElement>(ENABLED_ITEM);
+        buttons[event.key === "ArrowDown" ? 0 : buttons.length - 1]?.focus();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+      } else if (!["Shift", "Control", "Alt", "Meta"].includes(event.key)) {
+        onClose();
+      }
+    }
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [keepFocus, onClose]);
 
   // 메뉴 밖을 누르거나 휠을 굴리면 닫는다.
   useEffect(() => {
@@ -89,6 +120,10 @@ export default function NodeContextMenu({
       className="chrome-no-select absolute z-40 w-52 rounded-xl border border-rule bg-white p-1.5 shadow-float outline-none"
       style={{ left, top }}
       onPointerDown={(event) => event.stopPropagation()}
+      // 글자 메뉴는 항목을 눌러도 글 칸의 포커스·선택이 그대로 남게 한다.
+      onMouseDown={(event) => {
+        if (keepFocus) event.preventDefault();
+      }}
       onContextMenu={(event) => event.preventDefault()}
       onKeyDown={(event) => {
         // 메뉴 안의 키는 캔버스 단축키로 새지 않게 한다.
