@@ -2170,6 +2170,30 @@ export default function Workspace({
     });
   }
 
+  /** 글자가 골라진 input/textarea면 그 칸과 범위, 아니면 null. */
+  function selectedTextField(
+    element: Element | null,
+  ): ContextMenuState["field"] | null {
+    const field = element?.closest?.("input, textarea") as
+      HTMLInputElement | HTMLTextAreaElement | null | undefined;
+    if (!field || !hasSelectedText(field)) return null;
+    const start = field.selectionStart;
+    if (typeof start !== "number") return null;
+    return { element: field, start, end: field.selectionEnd ?? start };
+  }
+
+  /**
+   * 오른쪽 버튼을 누를 때, 글자를 골라 둔 칸이 있으면 브라우저가 포커스·커서를 옮기지 못하게 한다.
+   * 그래야 드래그한 선택이 남고 우클릭 메뉴가 그 글자를 대상으로 한다.
+   */
+  function keepTextSelection(event: {
+    button: number;
+    preventDefault(): void;
+  }) {
+    if (event.button === 2 && selectedTextField(document.activeElement))
+      event.preventDefault();
+  }
+
   /**
    * 작업영역 우클릭: 그 자리에 맞는 메뉴를 연다. 브라우저 메뉴는 늘 막는다.
    * 노드·이름 탭 → 그것을 고르고 노드 메뉴, 빈 곳 → 선택이 있으면 노드 메뉴·없으면 붙여넣기,
@@ -2189,22 +2213,16 @@ export default function Workspace({
       point,
     };
 
+    // 글자를 골라 둔 칸이 있으면 어디를 우클릭했든 그 글자의 메뉴(노드 위·빈 곳 포함).
+    const selected =
+      selectedTextField(document.activeElement) ?? selectedTextField(target);
+    if (selected) {
+      setContextMenu({ ...at, kind: "text", field: selected });
+      return;
+    }
     const field = target.closest("input, textarea, [contenteditable='true']");
     if (field) {
-      if (hasSelectedText(field)) {
-        const text = field as HTMLInputElement | HTMLTextAreaElement;
-        if (typeof text.selectionStart === "number")
-          setContextMenu({
-            ...at,
-            kind: "text",
-            field: {
-              element: text,
-              start: text.selectionStart,
-              end: text.selectionEnd ?? text.selectionStart,
-            },
-          });
-        return;
-      }
+      if (hasSelectedText(field)) return;
       if (!field.closest("[data-node-id]")) return;
     }
 
@@ -3335,6 +3353,7 @@ export default function Workspace({
             setEraserPointer(null);
           }}
           onContextMenu={openContextMenuAt}
+          onMouseDownCapture={keepTextSelection}
           onPointerUp={endGesture}
           onPointerCancel={endGesture}
           onLostPointerCapture={endGesture}

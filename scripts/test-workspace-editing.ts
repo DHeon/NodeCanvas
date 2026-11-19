@@ -231,6 +231,8 @@ const names = [
   "pasteAt",
   "pasteClipAt",
   "rememberCopiedText",
+  "keepTextSelection",
+  "selectedTextField",
   "handleCopy",
   "handleCut",
   "handlePaste",
@@ -331,6 +333,7 @@ type TestState = {
   lastPointer?: { clientX: number; clientY: number } | null;
   viewer?: string | null;
   copiedText?: string | null;
+  active?: unknown;
 };
 type Handlers = Record<string, (...args: unknown[]) => unknown>;
 const factory = new Function(
@@ -481,7 +484,12 @@ function setup(selected: string[] = []) {
         gestureRef,
         workspaceHistoryReducer,
         TestElement,
-        { elementFromPoint: () => state.hoveredElement },
+        {
+          elementFromPoint: () => state.hoveredElement,
+          get activeElement() {
+            return state.active ?? null;
+          },
+        },
         randomUUID,
         findConnectionTarget,
         MAX_CONNECTIONS,
@@ -2262,4 +2270,58 @@ test("menu paste after copying text makes a text node at the right-click point",
   assert.equal(made.text, "본문");
   // 화면 (210,120) → 캔버스 (380,160), 가운데 → (220,50)
   assert.deepEqual(made.position, { x: 220, y: 50 });
+});
+
+// ── 고른 글자가 있으면 어디서 우클릭해도 글자 메뉴 ──
+const focusedSelection = () =>
+  Object.assign(new TestElement(true, true, { nodeId: "a" }), {
+    value: "본문 글자",
+    selectionStart: 0,
+    selectionEnd: 2,
+  });
+
+test("right-click on empty space keeps a selected text field and opens the text menu", () => {
+  const h = setup(["a"]);
+  const field = focusedSelection();
+  h.state.active = field;
+  h.call("openContextMenuAt", rightClick(new TestElement()));
+  const menu = h.state.contextMenu as unknown as {
+    kind: string;
+    field: { element: unknown; start: number; end: number };
+  };
+  assert.equal(menu.kind, "text");
+  assert.equal(menu.field.element, field);
+  assert.deepEqual([menu.field.start, menu.field.end], [0, 2]);
+});
+
+test("right-click on a node keeps the focused text selection too", () => {
+  const h = setup(["a"]);
+  h.state.active = focusedSelection();
+  h.call(
+    "openContextMenuAt",
+    rightClick(new TestElement(false, true, { nodeId: "b" })),
+  );
+  assert.equal(h.state.contextMenu!.kind, "text");
+  assert.deepEqual(h.state.selected, ["a"]);
+});
+
+test("right mouse down does not move focus or caret while text is selected", () => {
+  const h = setup(["a"]);
+  const down = (button: number) => ({
+    button,
+    defaultPrevented: false,
+    preventDefault() {
+      this.defaultPrevented = true;
+    },
+  });
+  const plain = down(2);
+  h.call("keepTextSelection", plain);
+  assert.equal(plain.defaultPrevented, false);
+  h.state.active = focusedSelection();
+  const right = down(2);
+  h.call("keepTextSelection", right);
+  assert.equal(right.defaultPrevented, true);
+  const left = down(0);
+  h.call("keepTextSelection", left);
+  assert.equal(left.defaultPrevented, false);
 });
