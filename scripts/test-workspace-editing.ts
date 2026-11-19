@@ -229,6 +229,10 @@ const names = [
   "copySelection",
   "pastePoint",
   "pasteAt",
+  "pasteClipAt",
+  "rememberCopiedText",
+  "keepTextSelection",
+  "selectedTextField",
   "handleCopy",
   "handleCut",
   "handlePaste",
@@ -328,6 +332,8 @@ type TestState = {
   clip?: clipOps.NodeClip | null;
   lastPointer?: { clientX: number; clientY: number } | null;
   viewer?: string | null;
+  copiedText?: string | null;
+  active?: unknown;
 };
 type Handlers = Record<string, (...args: unknown[]) => unknown>;
 const factory = new Function(
@@ -353,10 +359,14 @@ const factory = new Function(
   "keyTargets",
   `
   const { canJoinByDrag, groupAtPoint, joinGroup, groupNodes, ungroupNodes, renameGroup } = groupOps;
-  const { selectedGroupIds, makeClip, pasteClip, PASTE_ERROR_NOTICES } = clipOps;
+  const { selectedGroupIds, makeClip, pasteClip, PASTE_ERROR_NOTICES, textClip } = clipOps;
+  const copiedTextRef = {
+    get current() { return state.copiedText ?? null; },
+    set current(value) { state.copiedText = value; },
+  };
   const { copiesNodes, hasSelectedText } = keyTargets;
   const runTextAction = () => { state.calls.push("text-action"); };
-  const hasClip = !!state.clip;
+  const hasClip = !!state.clip || !!state.copiedText;
   const viewerNodeId = state.viewer ?? null;
   const contextMenu = state.contextMenu ?? null;
   const setHasClip = () => {};
@@ -474,7 +484,12 @@ function setup(selected: string[] = []) {
         gestureRef,
         workspaceHistoryReducer,
         TestElement,
-        { elementFromPoint: () => state.hoveredElement },
+        {
+          elementFromPoint: () => state.hoveredElement,
+          get activeElement() {
+            return state.active ?? null;
+          },
+        },
         randomUUID,
         findConnectionTarget,
         MAX_CONNECTIONS,
@@ -1866,11 +1881,13 @@ function clipEvent(target: unknown, data = clipboardData()) {
 }
 const nodeField = (start: number, end: number) =>
   Object.assign(new TestElement(true, true, { nodeId: "a" }), {
+    value: "본문",
     selectionStart: start,
     selectionEnd: end,
   });
 const outsideField = () =>
   Object.assign(new TestElement(true, false), {
+    value: "속성",
     selectionStart: 0,
     selectionEnd: 0,
   });
@@ -2185,4 +2202,126 @@ test("clipboard keys do nothing behind the open image viewer", () => {
   h.state.clip = null;
   h.call("handleCopy", clipEvent(new TestElement()));
   assert.equal(h.state.clip ?? null, null);
+});
+
+// ── 글 붙여넣기 → 텍스트 노드 ──
+const selectedField = (
+  value: string,
+  start: number,
+  end: number,
+  inNode = true,
+) =>
+  Object.assign(new TestElement(true, inNode, inNode ? { nodeId: "a" } : {}), {
+    value,
+    selectionStart: start,
+    selectionEnd: end,
+  });
+
+test("copying text in a field forgets copied nodes and remembers the text", () => {
+  const h = setup(["a"]);
+  h.call("handleCopy", clipEvent(new TestElement()));
+  assert.ok(h.state.clip);
+  h.call("handleCopy", clipEvent(selectedField("본문 글자", 0, 2)));
+  assert.equal(h.state.clip, null);
+  assert.equal(h.state.copiedText, "본문");
+  h.call("handleCut", clipEvent(selectedField("속성 칸", 0, 2, false)));
+  assert.equal(h.state.copiedText, "속성");
+});
+
+test("copying nodes forgets copied text", () => {
+  const h = setup(["a"]);
+  h.state.copiedText = "글";
+  h.call("handleCopy", clipEvent(new TestElement()));
+  assert.equal(h.state.copiedText, null);
+});
+
+test("Ctrl+V of plain text on the canvas makes a text node at the pointer", () => {
+  const h = setup([]);
+  h.state.lastPointer = { clientX: 510, clientY: 370 };
+  const event = clipEvent(new TestElement(), clipboardData("메모장 글"));
+  h.call("handlePaste", event);
+  const present = h.state.history.present;
+  const made = present.nodes.at(-1)! as { text: string; position: Point };
+  assert.equal(present.nodes.length, 4);
+  assert.equal(made.text, "메모장 글");
+  // 캔버스 (980,660)에 320x220 가운데 → (820,550)
+  assert.deepEqual(made.position, { x: 820, y: 550 });
+  assert.equal(event.defaultPrevented, true);
+  assert.deepEqual(h.state.selected, [present.nodes.at(-1)!.id]);
+  assert.equal(h.state.history.past.length, 1);
+});
+
+test("Ctrl+V of blank text does nothing", () => {
+  const h = setup([]);
+  h.call("handlePaste", clipEvent(new TestElement(), clipboardData("   ")));
+  assert.equal(h.state.history.present.nodes.length, 3);
+});
+
+test("menu paste after copying text makes a text node at the right-click point", () => {
+  const h = setup([]);
+  h.call("handleCopy", clipEvent(selectedField("본문 글자", 0, 2)));
+  h.call("openContextMenuAt", rightClick(new TestElement()));
+  assert.equal(entry(menuItems(h), "paste").disabled, false);
+  h.call("runMenuAction", "paste");
+  const made = h.state.history.present.nodes.at(-1)! as {
+    text: string;
+    position: Point;
+  };
+  assert.equal(made.text, "본문");
+  // 화면 (210,120) → 캔버스 (380,160), 가운데 → (220,50)
+  assert.deepEqual(made.position, { x: 220, y: 50 });
+});
+
+// ── 고른 글자가 있으면 어디서 우클릭해도 글자 메뉴 ──
+const focusedSelection = () =>
+  Object.assign(new TestElement(true, true, { nodeId: "a" }), {
+    value: "본문 글자",
+    selectionStart: 0,
+    selectionEnd: 2,
+  });
+
+test("right-click on empty space keeps a selected text field and opens the text menu", () => {
+  const h = setup(["a"]);
+  const field = focusedSelection();
+  h.state.active = field;
+  h.call("openContextMenuAt", rightClick(new TestElement()));
+  const menu = h.state.contextMenu as unknown as {
+    kind: string;
+    field: { element: unknown; start: number; end: number };
+  };
+  assert.equal(menu.kind, "text");
+  assert.equal(menu.field.element, field);
+  assert.deepEqual([menu.field.start, menu.field.end], [0, 2]);
+});
+
+test("right-click on a node keeps the focused text selection too", () => {
+  const h = setup(["a"]);
+  h.state.active = focusedSelection();
+  h.call(
+    "openContextMenuAt",
+    rightClick(new TestElement(false, true, { nodeId: "b" })),
+  );
+  assert.equal(h.state.contextMenu!.kind, "text");
+  assert.deepEqual(h.state.selected, ["a"]);
+});
+
+test("right mouse down does not move focus or caret while text is selected", () => {
+  const h = setup(["a"]);
+  const down = (button: number) => ({
+    button,
+    defaultPrevented: false,
+    preventDefault() {
+      this.defaultPrevented = true;
+    },
+  });
+  const plain = down(2);
+  h.call("keepTextSelection", plain);
+  assert.equal(plain.defaultPrevented, false);
+  h.state.active = focusedSelection();
+  const right = down(2);
+  h.call("keepTextSelection", right);
+  assert.equal(right.defaultPrevented, true);
+  const left = down(0);
+  h.call("keepTextSelection", left);
+  assert.equal(left.defaultPrevented, false);
 });

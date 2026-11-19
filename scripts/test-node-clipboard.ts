@@ -6,6 +6,7 @@ import {
   makeClip,
   pasteClip,
   selectedGroupIds,
+  textClip,
 } from "../src/features/workspace/node-clipboard";
 import type {
   WorkspaceDocument,
@@ -333,4 +334,22 @@ test("pasteClip refuses a clip larger than a finite canvas", () => {
     pasteClip(finite, [], makeClip(big, [big.nodes[0].id])!, { x: 0, y: 0 }),
     { error: "size" },
   );
+});
+
+test("textClip makes one text node that pastes like any clip", () => {
+  const { document, g } = fixture();
+  const clip = textClip("붙인 글\n둘째 줄");
+  assert.equal(clip.nodes.length, 1);
+  assert.equal(clip.nodes[0].type, "text_node");
+  assert.equal((clip.nodes[0] as { text: string }).text, "붙인 글\n둘째 줄");
+  // g 영역 안에 붙이면 그 그룹에 들어간다.
+  const result = pasteClip(document, [], clip, { x: 300, y: 250 });
+  assert.ok("document" in result);
+  assert.equal(byId(result.document, result.nodeIds[0]).groupId, g);
+  valid(result.document);
+});
+
+test("textClip cuts text to the text node limit", () => {
+  const clip = textClip("가".repeat(60000));
+  assert.equal((clip.nodes[0] as { text: string }).text.length, 50000);
 });

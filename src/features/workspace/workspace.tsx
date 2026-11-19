@@ -64,6 +64,7 @@ import {
   pasteClip,
   PASTE_ERROR_NOTICES,
   selectedGroupIds,
+  textClip,
   type NodeClip,
 } from "./node-clipboard";
 import NodeContextMenu, { type ContextMenuEntry } from "./node-context-menu";
@@ -397,6 +398,8 @@ export default function Workspace({
   const fileInputRef = useRef<HTMLInputElement>(null);
   /** 앱 안 클립보드(같은 탭). 새로고침하면 사라진다. */
   const clipboardRef = useRef<NodeClip | null>(null);
+  /** 앱 안 글 칸에서 마지막으로 복사·잘라낸 글. 노드를 복사하면 비운다. */
+  const copiedTextRef = useRef<string | null>(null);
   // 메뉴의 "붙여넣기"를 켤지(렌더 중에는 ref를 읽지 않는다).
   const [hasClip, setHasClip] = useState(false);
   /** 뷰포트 위 마지막 포인터(화면 좌표). 밖으로 나가면 null — Ctrl+V 붙일 자리. */
@@ -2167,6 +2170,30 @@ export default function Workspace({
     });
   }
 
+  /** 글자가 골라진 input/textarea면 그 칸과 범위, 아니면 null. */
+  function selectedTextField(
+    element: Element | null,
+  ): ContextMenuState["field"] | null {
+    const field = element?.closest?.("input, textarea") as
+      HTMLInputElement | HTMLTextAreaElement | null | undefined;
+    if (!field || !hasSelectedText(field)) return null;
+    const start = field.selectionStart;
+    if (typeof start !== "number") return null;
+    return { element: field, start, end: field.selectionEnd ?? start };
+  }
+
+  /**
+   * 오른쪽 버튼을 누를 때, 글자를 골라 둔 칸이 있으면 브라우저가 포커스·커서를 옮기지 못하게 한다.
+   * 그래야 드래그한 선택이 남고 우클릭 메뉴가 그 글자를 대상으로 한다.
+   */
+  function keepTextSelection(event: {
+    button: number;
+    preventDefault(): void;
+  }) {
+    if (event.button === 2 && selectedTextField(document.activeElement))
+      event.preventDefault();
+  }
+
   /**
    * 작업영역 우클릭: 그 자리에 맞는 메뉴를 연다. 브라우저 메뉴는 늘 막는다.
    * 노드·이름 탭 → 그것을 고르고 노드 메뉴, 빈 곳 → 선택이 있으면 노드 메뉴·없으면 붙여넣기,
@@ -2186,22 +2213,16 @@ export default function Workspace({
       point,
     };
 
+    // 글자를 골라 둔 칸이 있으면 어디를 우클릭했든 그 글자의 메뉴(노드 위·빈 곳 포함).
+    const selected =
+      selectedTextField(document.activeElement) ?? selectedTextField(target);
+    if (selected) {
+      setContextMenu({ ...at, kind: "text", field: selected });
+      return;
+    }
     const field = target.closest("input, textarea, [contenteditable='true']");
     if (field) {
-      if (hasSelectedText(field)) {
-        const text = field as HTMLInputElement | HTMLTextAreaElement;
-        if (typeof text.selectionStart === "number")
-          setContextMenu({
-            ...at,
-            kind: "text",
-            field: {
-              element: text,
-              start: text.selectionStart,
-              end: text.selectionEnd ?? text.selectionStart,
-            },
-          });
-        return;
-      }
+      if (hasSelectedText(field)) return;
       if (!field.closest("[data-node-id]")) return;
     }
 
@@ -2485,9 +2506,16 @@ export default function Workspace({
     if (!file) {
       // 웹 주소 하나를 붙여넣으면 링크 노드로 만든다.
       // 일반 글을 붙여넣은 것과 구분하려고 http(s)://로 시작하는 주소만 받는다.
-      const text = data.getData("text/plain").trim();
+      const raw = data.getData("text/plain");
+      const text = raw.trim();
       const url = /^https?:\/\//i.test(text) ? normalizeLinkUrl(text) : null;
-      if (!url) return;
+      if (!url) {
+        // 일반 글은 그 글이 든 텍스트 노드로 붙인다.
+        if (!text) return;
+        event.preventDefault();
+        pasteClipAt(textClip(raw.replace(/\r\n/g, "\n")), pastePoint());
+        return;
+      }
       event.preventDefault();
       const nodeId = addNode("link_node");
       if (nodeId) setLinkUrl(nodeId, url, { commit: false });
@@ -2535,9 +2563,28 @@ export default function Workspace({
     const clip = makeClip(workspace, selectedNodeIds);
     if (clip) {
       clipboardRef.current = clip;
+      copiedTextRef.current = null;
       setHasClip(true);
     }
     return clip;
+  }
+
+  /**
+   * 글 칸에서 글자를 복사·잘라냈을 때: 복사해 둔 노드는 잊고 그 글을 기억한다.
+   * 메뉴의 붙여넣기가 예전 노드 대신 이 글로 텍스트 노드를 만들게 한다.
+   */
+  function rememberCopiedText(target: Element | null) {
+    const field = target?.closest("input, textarea") as
+      HTMLInputElement | HTMLTextAreaElement | null | undefined;
+    if (!field || typeof field.selectionStart !== "number") return;
+    const text = field.value.slice(
+      field.selectionStart,
+      field.selectionEnd ?? field.selectionStart,
+    );
+    if (!text) return;
+    clipboardRef.current = null;
+    copiedTextRef.current = text;
+    setHasClip(true);
   }
 
   /** Ctrl+V가 붙일 자리: 뷰포트 위 마지막 포인터, 없으면 화면 가운데(캔버스 좌표). */
@@ -2554,10 +2601,16 @@ export default function Workspace({
     };
   }
 
-  /** 앱 클립보드를 point(캔버스 좌표)에 붙인다. 실행 취소 한 단계. */
+  /** 앱 클립보드(노드, 없으면 복사한 글)를 point(캔버스 좌표)에 붙인다. */
   function pasteAt(point: Point) {
-    const clip = clipboardRef.current;
-    if (!clip || gestureRef.current) return;
+    const copied = copiedTextRef.current;
+    const clip = clipboardRef.current ?? (copied ? textClip(copied) : null);
+    if (clip) pasteClipAt(clip, point);
+  }
+
+  /** 묶음을 point(캔버스 좌표)에 붙인다. 실행 취소 한 단계, 붙인 노드를 선택한다. */
+  function pasteClipAt(clip: NodeClip, point: Point) {
+    if (gestureRef.current) return;
     const result = pasteClip(
       rootDocument,
       canvasPath.slice(0, activeDepth),
@@ -2578,7 +2631,11 @@ export default function Workspace({
   /** Ctrl+C: 캔버스(또는 고른 글자가 없는 노드 안 글 칸)에서는 노드를 복사한다. */
   function handleCopy(event: ClipboardInput) {
     const target = event.target instanceof Element ? event.target : null;
-    if (clipboardBlocked(target) || !copiesNodes(target)) return;
+    if (clipboardBlocked(target)) return;
+    if (!copiesNodes(target)) {
+      rememberCopiedText(target);
+      return;
+    }
     const clip = copySelection();
     if (!clip) return;
     event.clipboardData?.setData("text/plain", clip.text);
@@ -2588,7 +2645,11 @@ export default function Workspace({
   /** Ctrl+X: 복사와 같은 규칙으로 노드를 잘라낸다. */
   function handleCut(event: ClipboardInput) {
     const target = event.target instanceof Element ? event.target : null;
-    if (clipboardBlocked(target) || !copiesNodes(target)) return;
+    if (clipboardBlocked(target)) return;
+    if (!copiesNodes(target)) {
+      rememberCopiedText(target);
+      return;
+    }
     const clip = copySelection();
     if (!clip) return;
     event.clipboardData?.setData("text/plain", clip.text);
@@ -3292,6 +3353,7 @@ export default function Workspace({
             setEraserPointer(null);
           }}
           onContextMenu={openContextMenuAt}
+          onMouseDownCapture={keepTextSelection}
           onPointerUp={endGesture}
           onPointerCancel={endGesture}
           onLostPointerCapture={endGesture}
