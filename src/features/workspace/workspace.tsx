@@ -3528,6 +3528,7 @@ export default function Workspace({
               items={contextMenuItems(contextMenu)}
               onSelect={runMenuAction}
               onClose={closeContextMenu}
+              keepFocus={contextMenu.kind === "text"}
             />
           )}
           {connectMenu && (
