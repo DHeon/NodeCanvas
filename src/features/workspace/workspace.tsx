@@ -37,6 +37,15 @@ import {
   type SearchScope,
 } from "./search";
 import SearchPanel from "./search-panel";
+import {
+  archiveFileName,
+  buildArchive,
+  referencedImageIds,
+} from "./project-archive";
+import {
+  clearImportNotice,
+  peekImportNotice,
+} from "@/features/projects/import-project-button";
 import { roleForConnectedNode, setRole, setTodoDone } from "./roles";
 import {
   copiesNodes,
@@ -424,6 +433,17 @@ export default function Workspace({
   const [conflictBusy, setConflictBusy] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const [notice, setNotice] = useState("");
+  // 불러오기 직후 넘겨받은 알림(빠진 이미지 등)을 한 번 띄운다.
+  useEffect(() => {
+    const message = peekImportNotice();
+    if (!message) return;
+    // 첫 그리기가 끝난 뒤 띄우고 지운다(개발 모드에서 이펙트가 두 번 돌아도 한 번만).
+    const timer = window.setTimeout(() => {
+      clearImportNotice();
+      setNotice(message);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
   // 크게 보기 중인 이미지 노드. 다른 공간으로 가거나 노드가 사라지면 자동으로 닫힌다.
   const [viewerNodeId, setViewerNodeId] = useState<string | null>(null);
   const savingRef = useRef(false);
@@ -2471,6 +2491,39 @@ export default function Workspace({
     URL.revokeObjectURL(url);
   }
 
+  /** 프로젝트 전체(저장 전 편집·이미지 포함)를 .nono 파일로 내려받는다. */
+  async function exportArchive() {
+    const document = rootDocument;
+    const images = new Map<string, Uint8Array>();
+    try {
+      for (const id of referencedImageIds(document)) {
+        const response = await fetch(`/api/projects/${projectId}/images/${id}`);
+        if (!response.ok) throw new Error(String(response.status));
+        images.set(id, new Uint8Array(await response.arrayBuffer()));
+      }
+    } catch {
+      // 이미지가 빠진 백업을 조용히 만들지 않는다.
+      setNotice(
+        "이미지를 받아오지 못해 내보내지 않았어요. 잠시 후 다시 해 주세요.",
+      );
+      return;
+    }
+    const bytes = buildArchive({
+      title: projectTitle,
+      document,
+      images,
+      exportedAt: new Date().toISOString(),
+    });
+    const url = URL.createObjectURL(
+      new Blob([bytes as Uint8Array<ArrayBuffer>], { type: "application/zip" }),
+    );
+    const link = window.document.createElement("a");
+    link.href = url;
+    link.download = archiveFileName(projectTitle);
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
   function loadServerVersion() {
     if (
       window.confirm(
@@ -3304,7 +3357,7 @@ export default function Workspace({
       <WorkspaceMenu
         key={canvasKey}
         canvas={workspace.canvas}
-        onExport={exportDocument}
+        onExport={exportArchive}
         onViewChange={changeView}
         tags={rootDocument.tags ?? []}
         tagUsage={countTagUsage(rootDocument)}
