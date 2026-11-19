@@ -6,6 +6,7 @@ import { appOrigins } from "@/lib/app-origins";
 import { createWorkspace } from "@/features/workspace/create-workspace";
 import { workspaceDocumentSchema } from "@/features/workspace/workspace-schema";
 import { walkWorkspaceNodes } from "@/features/workspace/workspace-tree";
+import { recordHistory } from "@/features/workspace/history-server";
 
 export const runtime = "nodejs";
 
@@ -203,6 +204,16 @@ export async function PUT(request: Request, { params }: DocumentRouteContext) {
         );
     }
 
+    // 타임랩스 기록용 이전 문서. 버전이 맞을 때만 저장되므로 이 문서가 곧 저장 직전 문서다.
+    const previous = await prisma.project.findFirst({
+      where: {
+        id: idResult.data,
+        ownerId: session.user.id,
+        documentVersion: expectedVersion,
+      },
+      select: { document: true },
+    });
+
     const saved = await prisma.project.updateMany({
       //실제 저장
       where: {
@@ -245,6 +256,11 @@ export async function PUT(request: Request, { params }: DocumentRouteContext) {
         { status: 409 },
       );
     }
+
+    if (previous)
+      await recordHistory(idResult.data, previous.document, document).catch(
+        (error) => console.error("타임랩스 기록 실패:", error),
+      );
 
     return Response.json(
       {

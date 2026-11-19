@@ -4,6 +4,9 @@ import { strokePath, type DrawingStroke } from "./drawing";
 function StrokeShape({ stroke }: { stroke: DrawingStroke }) {
   return (
     <path
+      data-stroke-id={stroke.id}
+      // 타임랩스가 획을 그어 보일 때 길이를 1로 두고 점선 간격으로 그린다(평소 모양은 같다).
+      pathLength={1}
       d={strokePath(stroke.points)}
       stroke={connectionColor(stroke.color).value}
       strokeWidth={stroke.width}

@@ -13,6 +13,7 @@ export default function WorkspaceMenu({
   canvas,
   onApply,
   onExport,
+  onTimelapse,
   onViewChange,
   tags,
   tagUsage,
@@ -24,6 +25,7 @@ export default function WorkspaceMenu({
   onApply: (canvas: WorkspaceDocument["canvas"]) => string | null;
   /** .nono 파일로 내보낸다. 끝나면(실패 포함) 돌아온다. */
   onExport: () => void | Promise<void>;
+  onTimelapse: () => void;
   onViewChange: (
     patch: Pick<WorkspaceDocument["canvas"], "lineStyle" | "grid">,
   ) => void;
@@ -139,6 +141,17 @@ export default function WorkspaceMenu({
               )}
               {id === "view" && (
                 <div className="space-y-4">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenu(null);
+                      onTimelapse();
+                    }}
+                    className="-mx-1 w-[calc(100%+0.5rem)] rounded-lg px-3 py-2 text-left text-bark hover:bg-mist focus-visible:outline-2 focus-visible:outline-moss-deep"
+                  >
+                    타임랩스
+                  </button>
+                  <hr className="border-rule-soft" />
                   <h2 className="font-medium text-bark">이 캔버스 보기</h2>
                   <fieldset>
                     <legend className="mb-1.5 text-xs text-lichen">
