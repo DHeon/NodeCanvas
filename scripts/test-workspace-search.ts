@@ -232,3 +232,36 @@ test("checklist item text is searchable", () => {
     [checklist.id],
   );
 });
+
+test("scope limits results to the chosen nodes and the canvases inside them", () => {
+  const { root, link, plan, buttonNote, deepButton } = fixture();
+  const onlyLink = searchWorkspace(root, "버튼", [], {
+    path: [],
+    nodeIds: [link.id],
+  });
+  assert.deepEqual(
+    onlyLink.results.map((r) => r.node.id),
+    [link.id],
+  );
+  assert.equal(onlyLink.total, 1);
+  const inPlan = searchWorkspace(root, "버튼", [], {
+    path: [],
+    nodeIds: [plan.id],
+  });
+  assert.deepEqual(
+    inPlan.matches.map((r) => r.node.id),
+    [buttonNote.id, deepButton.id],
+  );
+});
+
+test("scope inside a sub-canvas ignores other canvases", () => {
+  const { root, plan, buttonNote, link } = fixture();
+  const { matches } = searchWorkspace(root, "버튼", [plan.id], {
+    path: [plan.id],
+    nodeIds: [buttonNote.id, link.id],
+  });
+  assert.deepEqual(
+    matches.map((r) => r.node.id),
+    [buttonNote.id],
+  );
+});
