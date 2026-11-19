@@ -257,8 +257,12 @@ test("frames skip steps that only touch another canvas", () => {
   ];
   const { frames, estimatedCount } = buildTimelapseFrames(rows, next, []);
   assert.equal(estimatedCount, 0);
-  assert.equal(frames.length, 2); // 빈 화면 + 첫 기록
-  assert.equal(buildTimelapseFrames(rows, next, [sub.id]).frames.length, 3);
+  // 안쪽만 바뀐 둘째 기록은 루트 재생에 장면을 더하지 않는다.
+  const firstOnly = buildTimelapseFrames(rows.slice(0, 1), root, []);
+  assert.equal(frames.length, firstOnly.frames.length);
+  const inner = buildTimelapseFrames(rows, next, [sub.id]).frames;
+  assert.equal(inner.length, 3); // 빈 화면 + C 놓기 + C 고침
+  assert.deepEqual(inner.at(-1)!.changed, [inner[1].entered[0]]);
 });
 
 test("frame duration grows with new strokes", () => {
@@ -269,4 +273,60 @@ test("frame duration grows with new strokes", () => {
   assert.ok(
     frameDuration({ strokes: Array.from({ length: 500 }, () => "s") }) <= 2000,
   );
+});
+
+test("one save that adds several nodes and lines shows each one as its own frame", () => {
+  const empty = createWorkspace();
+  const next = createWorkspace();
+  const [a, b, c] = [text("A", 0, 0), text("B", 300, 0), text("C", 600, 0)];
+  next.nodes = [a, b, c];
+  const line = (from: WorkspaceNode, to: WorkspaceNode) => ({
+    id: randomUUID(),
+    source: { nodeId: from.id, side: "right" as const },
+    target: { nodeId: to.id, side: "left" as const },
+  });
+  next.connections = [line(a, b), line(b, c)];
+  next.drawing = { strokes: [stroke(), stroke()] };
+  const rows = [
+    {
+      baseline: false,
+      patch: diffEntries(flattenDocument(empty), flattenDocument(next)),
+    },
+  ];
+  const { frames } = buildTimelapseFrames(rows, next, []);
+  // 빈 화면, A, B, A-B 선, C, B-C 선, 획 묶음
+  assert.deepEqual(
+    frames.map((frame) => [
+      frame.document.nodes.length,
+      frame.document.connections.length,
+      frame.strokes.length,
+    ]),
+    [
+      [0, 0, 0],
+      [1, 0, 0],
+      [2, 0, 0],
+      [2, 1, 0],
+      [3, 1, 0],
+      [3, 2, 0],
+      [3, 2, 2],
+    ],
+  );
+  assert.deepEqual(frames[1].entered, [a.id]);
+});
+
+test("every frame uses the final canvas size so nodes never sit outside it", () => {
+  const small = createWorkspace();
+  const node = text("멀리", 3000, 2000);
+  const grown = structuredClone(small);
+  grown.nodes = [node];
+  grown.canvas = { ...grown.canvas, width: 4000, height: 3000 };
+  const rows = [
+    {
+      baseline: false,
+      patch: diffEntries(flattenDocument(small), flattenDocument(grown)),
+    },
+  ];
+  const { frames } = buildTimelapseFrames(rows, grown, []);
+  for (const frame of frames)
+    assert.deepEqual(frame.document.canvas, grown.canvas);
 });

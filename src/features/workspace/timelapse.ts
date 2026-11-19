@@ -344,13 +344,15 @@ export function buildTimelapseFrames(
   path: readonly string[],
 ): { frames: TimelapseFrame[]; estimatedCount: number } {
   const key = path.join("/");
-  const fallbackCanvas = resolveWorkspacePath(current, path).document.canvas;
+  // 캔버스 크기는 지금 모습으로 고정한다. 노드를 놓은 저장과 캔버스가 커진 저장이 따로면
+  // 재생 중에 노드가 캔버스 밖에 있다가 캔버스가 뒤늦게 따라 커지는 것처럼 보인다.
+  const finalCanvas = resolveWorkspacePath(current, path).document.canvas;
   const canvasAt = (entries: Entries): WorkspaceDocument => {
     const root = buildDocument(entries);
     const { document, trail } = resolveWorkspacePath(root, path);
     return trail.length === path.length
-      ? document
-      : { canvas: fallbackCanvas, nodes: [], connections: [] };
+      ? { ...document, canvas: finalCanvas }
+      : { canvas: finalCanvas, nodes: [], connections: [] };
   };
   const steps: { patch: Patch; estimated: boolean }[] = [];
   const replayed: Entries = new Map();
@@ -378,20 +380,90 @@ export function buildTimelapseFrames(
     },
   ];
   for (const step of steps) {
-    const changes = pathChanges(entries, step.patch, key);
-    applyPatch(entries, step.patch);
-    if (!changes.touched) continue;
-    frames.push({
-      document: canvasAt(entries),
-      entered: changes.entered,
-      changed: changes.changed,
-      strokes: changes.strokes,
-      estimated: step.estimated,
-    });
+    const parts = step.estimated
+      ? [step.patch]
+      : splitPatch(entries, step.patch, key);
+    for (const part of parts) {
+      const changes = pathChanges(entries, part, key);
+      applyPatch(entries, part);
+      if (!changes.touched) continue;
+      frames.push({
+        document: canvasAt(entries),
+        entered: changes.entered,
+        changed: changes.changed,
+        strokes: changes.strokes,
+        estimated: step.estimated,
+      });
+    }
   }
   let estimatedCount = 0;
   while (frames[estimatedCount]?.estimated) estimatedCount++;
   return { frames, estimatedCount };
+}
+
+/**
+ * 한 번의 저장을 장면 여러 개로 나눈다. 이 캔버스에 새로 놓인 노드와 새 연결선은 하나씩
+ * (선은 양 끝 노드가 다 나온 뒤), 새 획은 마지막에 한 장면으로 모은다.
+ * 내용 고침·이동·삭제 같은 나머지는 맨 앞 한 장면으로 압축한다.
+ */
+function splitPatch(before: Entries, patch: Patch, path: string): Patch[] {
+  const rest: Patch = { set: [], del: [...patch.del] };
+  const nodes: [string, unknown][] = [];
+  const lines: [string, unknown][] = [];
+  const strokes: [string, unknown][] = [];
+  for (const pair of patch.set) {
+    const parsed = parseKey(pair[0]);
+    const fresh = parsed.path === path && !before.has(pair[0]);
+    if (fresh && parsed.kind === "node") nodes.push(pair);
+    else if (fresh && parsed.kind === "conn") lines.push(pair);
+    else if (fresh && parsed.kind === "stroke") strokes.push(pair);
+    else rest.set.push(pair);
+  }
+  const shown = new Set<string>();
+  for (const key of before.keys()) {
+    const parsed = parseKey(key);
+    if (parsed.kind === "node" && parsed.path === path) shown.add(parsed.id);
+  }
+  for (const key of patch.del) shown.delete(parseKey(key).id);
+  const ends = (value: unknown) => {
+    const line = value as {
+      source?: { nodeId?: string };
+      target?: { nodeId?: string };
+    };
+    return [line.source?.nodeId ?? "", line.target?.nodeId ?? ""];
+  };
+  const parts: Patch[] = [];
+  let waiting = lines;
+  const releaseLines = () => {
+    const ready = waiting.filter(([, value]) =>
+      ends(value).every((id) => shown.has(id)),
+    );
+    waiting = waiting.filter((pair) => !ready.includes(pair));
+    for (const pair of ready) parts.push({ set: [pair], del: [] });
+  };
+  releaseLines();
+  for (const pair of nodes) {
+    parts.push({ set: [pair], del: [] });
+    shown.add(parseKey(pair[0]).id);
+    releaseLines();
+  }
+  for (const pair of waiting) parts.push({ set: [pair], del: [] });
+  if (strokes.length) parts.push({ set: strokes, del: [] });
+  // 나머지에 이 캔버스에서 눈에 보이는 변화가 없으면(순서·설정만) 첫 장면에 얹어 빈 장면을 만들지 않는다.
+  const visible =
+    rest.del.some((key) => parseKey(key).path === path) ||
+    rest.set.some(([key]) => {
+      const parsed = parseKey(key);
+      return (
+        (parsed.kind === "tag" && !path) ||
+        (parsed.path === path &&
+          parsed.kind !== "shell" &&
+          parsed.kind !== "order")
+      );
+    });
+  if (visible || !parts.length) return [rest, ...parts];
+  parts[0] = { set: [...rest.set, ...parts[0].set], del: [] };
+  return parts;
 }
 
 /** 기준 기록 앞에 이미 재생된 항목이 있으면(묶인 기록) 그 위에 더해진 것만 추정 순서로 펼친다. */
