@@ -11,7 +11,9 @@ import {
 import type { WorkspaceNode } from "./types";
 
 type ConnectNodeMenuProps = {
-  /** 뷰포트 기준 위치(놓은 자리). */
+  /** 메뉴 제목. */
+  heading: string;
+  /** 뷰포트 기준 위치(놓은 자리·마우스 자리). */
   left: number;
   top: number;
   canvasDisabled: boolean;
@@ -34,8 +36,9 @@ const ITEMS = [
 
 const EDGE_GAP = 8;
 
-/** 연결선을 빈 곳에 놓았을 때 그 자리에 뜨는 노드 종류 메뉴. */
+/** 연결선을 빈 곳에 놓았을 때, 또는 A 키를 눌렀을 때 그 자리에 뜨는 노드 종류 메뉴. */
 export default function ConnectNodeMenu({
+  heading,
   left,
   top,
   canvasDisabled,
@@ -90,7 +93,7 @@ export default function ConnectNodeMenu({
     <div
       ref={menuRef}
       role="menu"
-      aria-label="이어서 만들 노드"
+      aria-label={heading}
       className="absolute z-40 w-44 rounded-xl border border-rule bg-white p-1.5 shadow-float"
       style={{ left, top }}
       onPointerDown={(event) => event.stopPropagation()}
@@ -118,7 +121,7 @@ export default function ConnectNodeMenu({
         }
       }}
     >
-      <p className="px-2 pt-1 pb-1.5 text-xs text-lichen">이어서 만들기</p>
+      <p className="px-2 pt-1 pb-1.5 text-xs text-lichen">{heading}</p>
       {ITEMS.map(({ type, label, key, Icon }) => {
         const disabled = type === "canvas_node" && canvasDisabled;
         return (

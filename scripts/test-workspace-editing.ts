@@ -220,6 +220,7 @@ const names = [
   "groupSelection",
   "ungroupSelection",
   "openMenuFromKeyboard",
+  "openAddMenu",
   "openContextMenuAt",
   "contextMenuItems",
   "copyFromMenu",
@@ -315,6 +316,7 @@ type TestState = {
     source: ConnectionEndpoint;
     others: ConnectionEndpoint[];
   } | null;
+  addMenu?: { left: number; top: number; point: Point } | null;
   hoveredElement: TestElement | null;
   calls: string[];
   spaceHeld?: boolean;
@@ -421,6 +423,7 @@ const factory = new Function(
     set current(value) { state.pendingFocus = value; },
   };
   const setSearchActive = value => { state.searchActive = value; };
+  const setAddMenu = value => { state.addMenu = value; };
   const setConnectMenu = value => { state.connectMenu = value; };
   const setJoinTargetId = value => { state.joinTarget = value; };
   const searchOpen = !!state.searchOpen;
@@ -1649,6 +1652,55 @@ test("단축키: K는 체크리스트 노드를 추가한다", () => {
   const h = setup();
   h.call("handleWorkspaceKeyDown", key("k"));
   assert.deepEqual(h.state.calls, ["add:checklist_node"]);
+});
+
+test("단축키: A는 마우스 자리에 노드 추가 메뉴를 연다", () => {
+  const h = setup();
+  h.state.camera = { x: 50, y: 20, zoom: 2 };
+  h.state.lastPointer = { clientX: 250, clientY: 120 };
+  h.call("handleWorkspaceKeyDown", key("a"));
+  const rect = { left: 10, top: 20, width: 1000, height: 700 };
+  assert.deepEqual(h.state.addMenu, {
+    left: 250 - rect.left,
+    top: 120 - rect.top,
+    point: { x: (250 - rect.left - 50) / 2, y: (120 - rect.top - 20) / 2 },
+  });
+  assert.deepEqual(h.state.calls, []);
+});
+
+test("단축키: 마우스가 캔버스 밖이면 A 메뉴는 화면 가운데에 뜬다", () => {
+  const h = setup();
+  h.state.lastPointer = null;
+  h.call("handleWorkspaceKeyDown", key("a"));
+  const rect = { left: 10, top: 20, width: 1000, height: 700 };
+  assert.equal(h.state.addMenu?.left, rect.width / 2);
+  assert.equal(h.state.addMenu?.top, rect.height / 2);
+});
+
+test("단축키: Ctrl+A·Shift+A·입력칸의 A는 노드 추가 메뉴를 열지 않는다", () => {
+  for (const extra of [
+    { ctrlKey: true },
+    { shiftKey: true },
+    { target: new TestElement(true) },
+  ]) {
+    const h = setup();
+    h.call("handleWorkspaceKeyDown", { ...key("a"), ...extra });
+    assert.equal(h.state.addMenu ?? null, null);
+  }
+});
+
+test("단축키: X는 선택한 노드를 지우고 Ctrl+X·입력칸의 X는 지우지 않는다", () => {
+  const h = setup();
+  h.state.selected = ["a"];
+  h.call("handleWorkspaceKeyDown", key("x"));
+  assert.ok(!h.state.history.present.nodes.some((node) => node.id === "a"));
+  assert.equal(h.state.history.past.length, 1);
+  for (const extra of [{ ctrlKey: true }, { target: new TestElement(true) }]) {
+    const other = setup();
+    other.state.selected = ["a"];
+    other.call("handleWorkspaceKeyDown", { ...key("x"), ...extra });
+    assert.ok(other.state.history.present.nodes.some((n) => n.id === "a"));
+  }
 });
 
 function groupedSetup() {
