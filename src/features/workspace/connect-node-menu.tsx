@@ -61,8 +61,14 @@ export default function ConnectNodeMenu({
     });
   }, [left, top]);
 
+  const close = useRef(onClose);
+  useEffect(() => {
+    close.current = onClose;
+  });
+
   // 메뉴 밖을 누르거나, 휠(돌리기·가운데 버튼 끌기)로 화면을 움직이면 닫는다.
   // 메뉴는 마우스 자리에 떠서, 휠은 메뉴 위에서 움직여도 닫는다.
+  // 화면 끌기가 시작되며 다시 그려질 때 이벤트 처리 중에 리스너가 바뀌면 그 이벤트를 놓치므로 한 번만 단다.
   useEffect(() => {
     function dismiss(event: Event) {
       if (
@@ -72,7 +78,7 @@ export default function ConnectNodeMenu({
         menuRef.current?.contains(event.target)
       )
         return;
-      onClose();
+      close.current();
     }
     document.addEventListener("pointerdown", dismiss, true);
     window.addEventListener("wheel", dismiss, { capture: true, passive: true });
@@ -80,7 +86,7 @@ export default function ConnectNodeMenu({
       document.removeEventListener("pointerdown", dismiss, true);
       window.removeEventListener("wheel", dismiss, true);
     };
-  }, [onClose]);
+  }, []);
 
   function move(step: number) {
     const items = [
