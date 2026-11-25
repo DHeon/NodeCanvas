@@ -61,10 +61,13 @@ export default function ConnectNodeMenu({
     });
   }, [left, top]);
 
-  // 메뉴 밖을 누르거나 화면을 휠로 움직이면 닫는다.
+  // 메뉴 밖을 누르거나, 휠(돌리기·가운데 버튼 끌기)로 화면을 움직이면 닫는다.
+  // 메뉴는 마우스 자리에 떠서, 휠은 메뉴 위에서 움직여도 닫는다.
   useEffect(() => {
     function dismiss(event: Event) {
       if (
+        event instanceof PointerEvent &&
+        event.button !== 1 &&
         event.target instanceof Node &&
         menuRef.current?.contains(event.target)
       )
