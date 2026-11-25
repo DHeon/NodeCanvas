@@ -6,6 +6,7 @@ const groups: { title: string; items: [string, string][] }[] = [
   {
     title: "만들기",
     items: [
+      ["A", "마우스 자리에 노드 추가"],
       ["T", "텍스트 노드 추가"],
       ["I", "이미지 노드 추가"],
       ["C", "캔버스 노드 추가"],
@@ -34,7 +35,7 @@ const groups: { title: string; items: [string, string][] }[] = [
       ["Ctrl + A", "모두 선택"],
       ["방향키", "선택한 노드 이동 (Shift: 크게)"],
       ["Enter / F2", "노드 제목 편집"],
-      ["Delete", "선택 삭제"],
+      ["X / Delete", "선택 삭제"],
       ["Ctrl + Z / Ctrl + Y", "실행 취소 / 다시 실행"],
       ["Ctrl + S", "지금 저장"],
     ],

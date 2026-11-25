@@ -522,6 +522,12 @@ export default function Workspace({
     null,
   );
   const [connectMenu, setConnectMenu] = useState<ConnectMenuState | null>(null);
+  // A 키로 여는 노드 추가 메뉴. 위치는 뷰포트 기준, point는 새 노드의 가운데(캔버스 좌표).
+  const [addMenu, setAddMenu] = useState<{
+    left: number;
+    top: number;
+    point: Point;
+  } | null>(null);
   // 노드를 끄는 동안 커서 아래에 있어 놓으면 들어갈 그룹(진하게 표시).
   const [joinTargetId, setJoinTargetId] = useState<string | null>(null);
   // 우클릭(메뉴 키) 메뉴. 위치는 뷰포트 기준, point는 붙여넣을 캔버스 좌표.
@@ -533,6 +539,7 @@ export default function Workspace({
     setSelectedNodeIds([]);
     setSelectedConnectionId(null);
     setConnectMenu(null);
+    setAddMenu(null);
     setContextMenu(null);
   }
   const [isPanning, setIsPanning] = useState(false); //드래그 상태따라 커서 변경
@@ -1265,6 +1272,8 @@ export default function Workspace({
       "0": fitCanvas,
     };
     const createActions: Record<string, () => void> = {
+      a: openAddMenu,
+      x: deleteSelection,
       t: () => addNode("text_node"),
       i: () => {
         const nodeId = addNode("image_node");
@@ -1934,6 +1943,34 @@ export default function Workspace({
     });
     closeConnectMenu();
   }
+
+  /** 마우스 자리(캔버스 밖이면 화면 가운데)에 노드 추가 메뉴를 연다. */
+  function openAddMenu() {
+    const viewport = viewportRef.current;
+    if (!viewport || gestureRef.current) return;
+    const point = pastePoint();
+    setContextMenu(null);
+    setAddMenu({
+      left: point.x * camera.zoom + camera.x,
+      top: point.y * camera.zoom + camera.y,
+      point,
+    });
+  }
+
+  function closeAddMenu() {
+    setAddMenu(null);
+    // 메뉴에 있던 포커스를 돌려 단축키가 이어지게 한다.
+    viewportRef.current?.focus({ preventScroll: true });
+  }
+
+  /** 추가 메뉴에서 고른 종류의 노드를 메뉴를 연 자리에 만든다. */
+  function addNodeFromMenu(type: WorkspaceNode["type"]) {
+    if (!addMenu) return;
+    closeAddMenu();
+    const nodeId = addNode(type, undefined, addMenu.point);
+    if (nodeId && type === "image_node") chooseImage(nodeId);
+  }
+
   function addNode(
     type: WorkspaceNode["type"],
     /** 연결선을 빈 곳에 놓아 만들 때: 그 변의 연결점을 anchor에 두고 sources를 잇는다. */
@@ -1942,6 +1979,8 @@ export default function Workspace({
       side: ConnectionSide;
       sources: ConnectionEndpoint[];
     },
+    /** 새 노드의 가운데가 올 자리. 없으면 화면 가운데에 만들고 그리로 화면을 옮긴다. */
+    center?: Point,
   ) {
     const viewport = viewportRef.current;
     if (!viewport || gestureRef.current) return null;
@@ -1981,10 +2020,15 @@ export default function Workspace({
     const port = at && positionForPort(at.anchor, at.side, width, height);
     const wanted = port
       ? { x: Math.round(port.x), y: Math.round(port.y) }
-      : {
-          x: centerX - width / 2 + offset,
-          y: centerY - height / 2 + offset,
-        };
+      : center
+        ? {
+            x: Math.round(center.x - width / 2),
+            y: Math.round(center.y - height / 2),
+          }
+        : {
+            x: centerX - width / 2 + offset,
+            y: centerY - height / 2 + offset,
+          };
     const x = workspace.canvas.infinite
       ? wanted.x
       : Math.max(0, Math.min(wanted.x, workspace.canvas.width - width));
@@ -2051,11 +2095,12 @@ export default function Workspace({
         nodes: [...current.nodes, node],
       }));
       setNotice("");
-      setCamera((current) => ({
-        ...current,
-        x: rect.width / 2 - (x + width / 2) * current.zoom,
-        y: rect.height / 2 - (y + height / 2) * current.zoom,
-      }));
+      if (!center)
+        setCamera((current) => ({
+          ...current,
+          x: rect.width / 2 - (x + width / 2) * current.zoom,
+          y: rect.height / 2 - (y + height / 2) * current.zoom,
+        }));
     }
     setSelectedNodeIds([node.id]);
     setSelectedConnectionId(null);
@@ -2125,6 +2170,7 @@ export default function Workspace({
     dismissSearch();
     setContextMenu(null);
     setConnectMenu(null);
+    setAddMenu(null);
     setViewerNodeId(null);
     if (tool !== "select") changeTool("select");
     setSelectedNodeIds([]);
@@ -3162,8 +3208,8 @@ export default function Workspace({
       )
     : undefined;
   const selectionDescription = selectedConnectionId
-    ? "선택한 연결선 삭제 (Delete / Backspace)"
-    : `선택한 노드 ${selectedNodeIds.length}개 삭제 (Delete / Backspace)`;
+    ? "선택한 연결선 삭제 (X / Delete)"
+    : `선택한 노드 ${selectedNodeIds.length}개 삭제 (X / Delete)`;
 
   return (
     <main
@@ -3268,9 +3314,9 @@ export default function Workspace({
             title={
               selectionCount > 0
                 ? selectionDescription
-                : "선택 삭제 (Delete / Backspace)"
+                : "선택 삭제 (X / Delete)"
             }
-            aria-keyshortcuts="Delete Backspace"
+            aria-keyshortcuts="X Delete Backspace"
             className={iconButtonClassName}
           >
             <Image
@@ -3716,11 +3762,22 @@ export default function Workspace({
           )}
           {connectMenu && (
             <ConnectNodeMenu
+              heading="이어서 만들기"
               left={connectMenu.left}
               top={connectMenu.top}
               canvasDisabled={activeDepth >= MAX_CANVAS_DEPTH}
               onPick={createConnectedNode}
               onClose={closeConnectMenu}
+            />
+          )}
+          {addMenu && (
+            <ConnectNodeMenu
+              heading="노드 추가"
+              left={addMenu.left}
+              top={addMenu.top}
+              canvasDisabled={activeDepth >= MAX_CANVAS_DEPTH}
+              onPick={addNodeFromMenu}
+              onClose={closeAddMenu}
             />
           )}
           {searchOpen && (

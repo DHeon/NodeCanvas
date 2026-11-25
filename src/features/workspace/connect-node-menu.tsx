@@ -11,7 +11,9 @@ import {
 import type { WorkspaceNode } from "./types";
 
 type ConnectNodeMenuProps = {
-  /** 뷰포트 기준 위치(놓은 자리). */
+  /** 메뉴 제목. */
+  heading: string;
+  /** 뷰포트 기준 위치(놓은 자리·마우스 자리). */
   left: number;
   top: number;
   canvasDisabled: boolean;
@@ -34,8 +36,9 @@ const ITEMS = [
 
 const EDGE_GAP = 8;
 
-/** 연결선을 빈 곳에 놓았을 때 그 자리에 뜨는 노드 종류 메뉴. */
+/** 연결선을 빈 곳에 놓았을 때, 또는 A 키를 눌렀을 때 그 자리에 뜨는 노드 종류 메뉴. */
 export default function ConnectNodeMenu({
+  heading,
   left,
   top,
   canvasDisabled,
@@ -58,15 +61,24 @@ export default function ConnectNodeMenu({
     });
   }, [left, top]);
 
-  // 메뉴 밖을 누르거나 화면을 휠로 움직이면 닫는다.
+  const close = useRef(onClose);
+  useEffect(() => {
+    close.current = onClose;
+  });
+
+  // 메뉴 밖을 누르거나, 휠(돌리기·가운데 버튼 끌기)로 화면을 움직이면 닫는다.
+  // 메뉴는 마우스 자리에 떠서, 휠은 메뉴 위에서 움직여도 닫는다.
+  // 화면 끌기가 시작되며 다시 그려질 때 이벤트 처리 중에 리스너가 바뀌면 그 이벤트를 놓치므로 한 번만 단다.
   useEffect(() => {
     function dismiss(event: Event) {
       if (
+        event instanceof PointerEvent &&
+        event.button !== 1 &&
         event.target instanceof Node &&
         menuRef.current?.contains(event.target)
       )
         return;
-      onClose();
+      close.current();
     }
     document.addEventListener("pointerdown", dismiss, true);
     window.addEventListener("wheel", dismiss, { capture: true, passive: true });
@@ -74,7 +86,7 @@ export default function ConnectNodeMenu({
       document.removeEventListener("pointerdown", dismiss, true);
       window.removeEventListener("wheel", dismiss, true);
     };
-  }, [onClose]);
+  }, []);
 
   function move(step: number) {
     const items = [
@@ -90,7 +102,7 @@ export default function ConnectNodeMenu({
     <div
       ref={menuRef}
       role="menu"
-      aria-label="이어서 만들 노드"
+      aria-label={heading}
       className="absolute z-40 w-44 rounded-xl border border-rule bg-white p-1.5 shadow-float"
       style={{ left, top }}
       onPointerDown={(event) => event.stopPropagation()}
@@ -118,7 +130,7 @@ export default function ConnectNodeMenu({
         }
       }}
     >
-      <p className="px-2 pt-1 pb-1.5 text-xs text-lichen">이어서 만들기</p>
+      <p className="px-2 pt-1 pb-1.5 text-xs text-lichen">{heading}</p>
       {ITEMS.map(({ type, label, key, Icon }) => {
         const disabled = type === "canvas_node" && canvasDisabled;
         return (
